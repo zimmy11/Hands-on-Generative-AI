@@ -1,0 +1,43 @@
+from typing import Optional, Tuple
+
+import torch
+from subVP_SDE import subVP_SDE
+from Configurations import ForwardConfig
+
+class ForwardProcess:
+    def __init__(self, beta_min: float = 0.1, beta_max: float = 20.0, N: int = 1000):
+        self.beta_min = beta_min
+        self.beta_max = beta_max
+        self.N = N
+
+    @torch.no_grad()
+    def get_noised_latents(z0: torch.Tensor, t: float = None, final: bool = False, eps: float = 1e-5, sde_cfg: ForwardProcess = ForwardProcess()) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return noised latents z_t, along with the exact epsilon used and std(t).
+        - z0: encoded latents (B, ...)
+        - t: scalar in (0,1). If None and final=False, defaults to 0.5.
+        - final=True overrides t and uses t=1-eps.
+        - sde_cfg: controls beta schedule and number of steps (for consistency only).
+        """
+        if final:
+            t_val = 1.0 - float(eps)
+        else:
+            t_val = 0.5 if t is None else float(t)
+
+        # Building the SDE on the same device of the latent vector
+        sde = subVP_SDE(beta_min=sde_cfg.beta_min, beta_max=sde_cfg.beta_max, N=sde_cfg.N)
+        t_tensor = torch.full((z0.size(0),), t_val, device=z0.device, dtype=z0.dtype)
+    
+        # Appling the close form perturbation ("noise")
+        z_t, epsilon, std = sde.perturb(z0, t_tensor)
+        return z_t, epsilon, std
+
+    @torch.no_grad()
+    def main():
+        cfg = ForwardConfig()
+        z0 = torch.load(cfg.input_path, map_location="cpu")
+    
+        sde_cfg = ForwardProcess(cfg.beta_min,cfg.beta_max, cfg.N)
+    
+        z_t, epsilon, std = get_noised_latents(z0, t=cfg.t, final=cfg.final, eps=cfg.eps, sde_cfg=sde_cfg)
+    
+        torch.save(z_t, cfg.output_path)
