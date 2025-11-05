@@ -1,0 +1,17 @@
+# --- PyTorch & Core Scientific Libraries ---
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.20.0
+matplotlib>=3.5.0
+tqdm>=4.62.0
+
+# --- LDM / VAE Dependencies (Hugging Face ecosystem) ---
+# Necessario per caricare il VAE pre-addestrato ("stabilityai/sd-vae-ft-mse")
+diffusers>=0.20.0 
+# Utile per utilities e potenzialmente per Phase 3 (Text Conditioning)
+transformers>=4.30.0 
+# Utile per Phase 3 (text encoder leggero)
+sentence-transformers>=2.2.0
+
+# --- Data Handling ---
+Pillow>=9.0.0
