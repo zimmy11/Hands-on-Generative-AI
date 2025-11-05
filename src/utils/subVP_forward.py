@@ -13,10 +13,23 @@ class ForwardProcess:
     @torch.no_grad()
     def get_noised_latents(z0: torch.Tensor, t: float = None, final: bool = False, eps: float = 1e-5, sde_cfg: ForwardProcess = ForwardProcess()) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return noised latents z_t, along with the exact epsilon used and std(t).
-        - z0: encoded latents (B, ...)
-        - t: scalar in (0,1). If None and final=False, defaults to 0.5.
-        - final=True overrides t and uses t=1-eps.
-        - sde_cfg: controls beta schedule and number of steps (for consistency only).
+        
+        Inputs:
+        z0: encoded latents. Device and dtype define outputs.
+        t: scalar in (0, 1). If None and final=False, defaults to 0.5 for a mid-horizon corruption level.
+        final: if True, overrides t and uses t = 1 - eps to avoid t=1 exactly for numerical stability when computing σ(t).
+        eps: small offset so that final-time evaluation uses 1 - eps instead of 1.0. Prevents sqrt(1 - exp(…)) from degenerating.
+        sde_cfg: ForwardProcess instance carrying beta schedule and N. Used to build a subVP_SDE with matching parameters.
+
+        Operations:
+        1. Builds subVP_SDE(beta_min, beta_max, N) on the same device as z0.
+        2. Broadcasts scalar t to a batch vector (B,) for the SDE call.
+        3. Calls closed-form perturbation: z_t = μ(t|z0) + σ(t) * ε, where ε ~ N(0, I) if not supplied internally by subVP_SDE.
+        4. Returns (z_t, ε, σ(t)), where σ(t) has shape (B,).
+
+        Notes:
+        - Deterministic given z0, t, and a fixed epsilon.
+        - Useful for reproducible corruption by reusing returned epsilon.
         """
         if final:
             t_val = 1.0 - float(eps)

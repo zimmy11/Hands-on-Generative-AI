@@ -1,4 +1,7 @@
 class ForwardConfig:
+    """
+    Parameters configuartion for the forward process
+    """
     def __init__(
         self,
         input_path="latents.pt",
