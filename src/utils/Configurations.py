@@ -6,18 +6,22 @@ class ForwardConfig:
         self,
         input_path="latents.pt",
         output_path="latents_noised.pt",
-        t=0.7,
-        final=False,
-        eps=1e-5,
-        beta_min=0.1,
-        beta_max=20.0,
-        N=1000,
+        t: float = 0.7,
+        final: bool = True,
+        eps: float = 1e-5,
+        closed_formula: bool = True,
+        seed: int = 42,
+        beta_min: float = 0.1,
+        beta_max: float = 20.0,
+        N: int = 1000,
     ):
         self.input_path = input_path
         self.output_path = output_path
         self.t = t
         self.final = final
         self.eps = eps
+        self.closed_formula = closed_formula
+        self.seed = seed
         self.beta_min = beta_min
         self.beta_max = beta_max
         self.N = N
