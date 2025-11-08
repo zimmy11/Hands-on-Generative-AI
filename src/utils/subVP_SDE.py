@@ -127,7 +127,7 @@ class subVP_SDE:
             dt = (t_grid[k+1] - t_grid[k]).item() # we return a scalar value
             drift, diffusion = self.sde(x, t_k)
             noise = torch.randn_like(x, generator = gen) # we generate Gaussian Noise, with same device and dtype as x
-            x_t = x + drift * dt + diffusion[:, None, None, None] * (dt ** 0.5) * noise
+            x = x + drift * dt + diffusion[:, None, None, None] * (dt ** 0.5) * noise
         
         t_tensor = torch.full((B,), t_scalar, device = device, dtype = dtype)
         mean_t, std_t = self.marginal_prob(x_0, t_tensor)
