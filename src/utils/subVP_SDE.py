@@ -96,7 +96,7 @@ class subVP_SDE:
         x_t = mean + std[:,None, None, None] * noise
         return x_t, noise, std
 
-    def perturb_simulate_path(self, x_0: torch.Tensor, t_end: torch.Tensor, steps: int = 500, seed: int = 42, eps: float = 1e-12):
+    def perturb_simulate_path(self, x_0: torch.Tensor, t_end: float = 0.5, steps: int = 500, seed: int = 42, eps: float = 1e-12):
         """Sample X_t by perturbing X_0 with gaussian noise at time t
 
         Operation:
@@ -110,7 +110,7 @@ class subVP_SDE:
           
         Args:
         x_0: (B,C,H,W), t:(B,)"""
-        t_scalar = float(t_end.item())
+        t_scalar = float(t_end)
         
         device = x_0.device
         dtype = x_0.dtype
@@ -126,7 +126,7 @@ class subVP_SDE:
             t_k = t_grid[k].expand(B)
             dt = (t_grid[k+1] - t_grid[k]).item() # we return a scalar value
             drift, diffusion = self.sde(x, t_k)
-            noise = torch.randn_like(x, generator = gen) # we generate Gaussian Noise, with same device and dtype as x
+            noise = noise = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=gen) # we generate Gaussian Noise, with same device and dtype as x
             x = x + drift * dt + diffusion[:, None, None, None] * (dt ** 0.5) * noise
         
         t_tensor = torch.full((B,), t_scalar, device = device, dtype = dtype)
