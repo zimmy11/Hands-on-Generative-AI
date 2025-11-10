@@ -11,7 +11,7 @@ class ForwardProcess:
         self.N = N
 
     @torch.no_grad()
-    def get_noised_latents(z0: torch.Tensor, t: float = None, final: bool = False, eps: float = 1e-5, sde_cfg: ForwardProcess = ForwardProcess()) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def get_noised_latents(z0: torch.Tensor, t: float = None, final: bool = False, eps: float = 1e-5, closed_formula : bool = True, steps: int = 500, seed: int = 42, sde_cfg: ForwardConfig = ForwardConfig()) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return noised latents z_t, along with the exact epsilon used and std(t).
         
         Inputs:
@@ -38,10 +38,14 @@ class ForwardProcess:
 
         # Building the SDE on the same device of the latent vector
         sde = subVP_SDE(beta_min=sde_cfg.beta_min, beta_max=sde_cfg.beta_max, N=sde_cfg.N)
-        t_tensor = torch.full((z0.size(0),), t_val, device=z0.device, dtype=z0.dtype)
-    
-        # Appling the close form perturbation ("noise")
-        z_t, epsilon, std = sde.perturb(z0, t_tensor)
+
+        if closed_formula:
+            t_tensor = torch.full((z0.size(0),), t_val, device=z0.device, dtype=z0.dtype)
+            z_t, epsilon, std = sde.perturb_closed(z0, t_tensor)
+        else:
+            # t_tensor = torch.tensor([t_val], device=z0.device, dtype=z0.dtype)
+            z_t, epsilon, std = sde.perturb_simulate_path(z0, t_val, steps = steps, seed = seed)
+        
         return z_t, epsilon, std
 
     @torch.no_grad()
@@ -51,6 +55,6 @@ class ForwardProcess:
     
         sde_cfg = ForwardProcess(cfg.beta_min,cfg.beta_max, cfg.N)
     
-        z_t, epsilon, std = get_noised_latents(z0, t=cfg.t, final=cfg.final, eps=cfg.eps, sde_cfg=sde_cfg)
+        z_t, epsilon, std = get_noised_latents(z0, t = cfg.t, final = cfg.final, eps = cfg.eps, closed_formula = cfg.closed_formula, steps = cfg.N, seed = cfg.seed, sde_cfg = sde_cfg)
     
         torch.save(z_t, cfg.output_path)
