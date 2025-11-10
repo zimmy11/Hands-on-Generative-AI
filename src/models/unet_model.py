@@ -16,7 +16,7 @@ class ResBlock(nn.Module):
         self.time_proj1 = nn.Linear(time_embed_dim, channels * 2)
         self.time_proj2 = nn.Linear(time_embed_dim, channels * 2)
 
-        # Input Number of channels (128, 256, 512) x h (16, 32) x w (16, 32)
+        # Input Number of channels (128 | 256 | 512) x h (16 | 32) x w (16 | 32)
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
         self.norm1 = nn.GroupNorm(num_groups=num_groups, num_channels=channels)
         self.act = nn.SiLU(inplace=True)
