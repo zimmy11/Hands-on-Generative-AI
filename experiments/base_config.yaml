@@ -1,0 +1,18 @@
+# /configs/config.yaml
+
+# --- TRAINING HYPERPARAMETERS (Phase 2: Unconditional LDM) ---
+epochs: 50
+learning_rate: 0.0001
+batch_size: 64
+
+# --- SDE/DIFFUSION SCHEDULE PARAMETERS (subVP SDE) ---
+n_timesteps: 1000      # N value for the diffusion schedule (T=1.0)
+beta_min: 0.1         # Beta schedule minimum (beta_0)
+beta_max: 20.0        # Beta schedule maximum (beta_1)
+use_importance_sampling: True # Set to True to use g(t)^2 / lambda_orig(t) sampling
+
+# --- DATA AND RESOURCE CONFIGURATION ---
+num_workers: 4        # Number of CPU workers for the DataLoader (Adjust based on GCP VM size)
+# data_path will be passed via the gcloud command line argument, 
+# but a default is included here for local testing consistency.
+# data_path: ./data/coco2017/train2017

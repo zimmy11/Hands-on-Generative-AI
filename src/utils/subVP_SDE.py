@@ -25,7 +25,7 @@ class subVP_SDE:
         """
         return self.beta_0 + t * (self.beta_1 - self.beta_0)
 
-    def beta_exponential(t: torch.Tensor) -> torch.Tensor:
+    def beta_exponential(self, t: torch.Tensor) -> torch.Tensor:
         """β(t) grows exponentially from β_0 to β_1 across t in [0, 1]"""
         sequence = torch.log(torch.tensor(self.beta_1/self.beta_0, device = t.device, dtype = t.dtype))
         return self.beta_0 * torch.exp(sequence * t)
@@ -133,5 +133,43 @@ class subVP_SDE:
         mean_t, std_t = self.marginal_prob(x_0, t_tensor)
         eps_implied = (x - mean_t) / (std_t[:, None, None, None] +1e-12) #noise tensor
         return x, eps_implied, std_t
+    
+    def get_integral_beta(self, t: torch.Tensor) -> torch.Tensor:
+        """Computes the integral of beta(s) from 0 to t."""
+        # ∫_0^t beta(s) ds = beta_0 * t + 0.5 * (beta_1 - beta_0) * t^2
+        return self.beta_0 * t + 0.5 * (self.beta_1 - self.beta_0) * t ** 2
+    
             
-            
+    def get_g_squared(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Computes the coefficient g(t)^2.
+        
+        λ(t) is used in the SDE definition as the diffusion coefficient squared.
+        λ(t) = g(t)^2 = β(t) * (1 - exp(-2 * ∫_0^t β(s) ds))
+        """
+
+
+        # 1. β(t)
+        beta_t = self.beta_linear(t)
+        
+        # 2. ∫_0^t β(s) ds
+        integral_beta = self.get_integral_beta(t)
+        
+        # 3. 'discount' factor (1 - exp(-2 * Integrale))
+        discount_factor = 1.0 - torch.exp(-2 * integral_beta)
+        
+        # 4. g(t)^2 = β(t) * discount_factor
+        g_squared = beta_t * discount_factor
+        
+        return g_squared
+    
+
+        
+    def get_lambda_original(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Computes λ(t) = (1 - exp(-∫_0^t β(s) ds))^2
+        """
+        integral_beta = self.get_integral_beta(t)
+        # 1 - exp(-Integral) è un fattore comune nel formalismo DDPM/SDE
+        alpha_t_factor = torch.exp(-integral_beta) 
+        return (1.0 - alpha_t_factor) ** 2
