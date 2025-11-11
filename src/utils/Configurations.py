@@ -14,6 +14,7 @@ class ForwardConfig:
         beta_min: float = 0.1,
         beta_max: float = 20.0,
         N: int = 1000,
+        schedule: str = "linear"
     ):
         self.input_path = input_path
         self.output_path = output_path
@@ -25,3 +26,4 @@ class ForwardConfig:
         self.beta_min = beta_min
         self.beta_max = beta_max
         self.N = N
+        self.schedule = schedule
