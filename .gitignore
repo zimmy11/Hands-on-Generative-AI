@@ -1,3 +1,8 @@
 data/
 
-weights/
+checkpoints/
+
+wandb/
+
+# Ignore Python cache files
+__pycache__/

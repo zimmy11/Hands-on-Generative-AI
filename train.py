@@ -11,7 +11,7 @@ import wandb
 
 # Import all core components from your structured project modules
 from src.models.unet_model import UNet  # Your custom UNet model
-from src.utils.sde_utils import calculate_importance_sampling_probabilities, subVP_SDE, ForwardProcess 
+from src.utils.sde_utils import calculate_importance_sampling_probabilities, ForwardProcess 
 # from src.utils.subVP_forward import ForwardProcess   # Forward process with subVP_SDE
 from src.utils.vae_utils import get_vae_encoder_func # Function to load and return the VAE encoder
 from src.data.base_dataset import LatentDataset       # Your custom Dataset class
@@ -20,11 +20,6 @@ from src.training.ldm_module import LDMLightningModule # Your PL module core
 
 # --- GLOBAL CONFIGURATION PLACEHOLDERS (Will be overridden by config.yaml) ---
 # These are just here for structural reference.
-LATENT_CHANNELS = 4 
-IMAGE_SIZE = 512 
-FEATURES = [320, 640, 1280]
-VAE_SCALE_FACTOR = 0.18215 
-VALIDATION_SPLIT_RATIO = 0.1
 
 
 # --- SETUP FUNCTION ---
@@ -46,10 +41,10 @@ def setup(cfg: dict, data_path: str, device: torch.device):
     # A. Data Loading & Splitting
     try:
         # Load the full dataset (assuming raw images are present in the directory)
-        full_dataset = LatentDataset(data_dir=data_path, image_size=IMAGE_SIZE)
+        full_dataset = LatentDataset(data_dir=data_path, image_size=cfg['image_size'])
         
         # Define split sizes
-        val_size = int(VALIDATION_SPLIT_RATIO * len(full_dataset))
+        val_size = int(cfg['validation_split_ratio'] * len(full_dataset))
         train_size = len(full_dataset) - val_size
         
         # Deterministic Split for reproducibility
@@ -70,7 +65,7 @@ def setup(cfg: dict, data_path: str, device: torch.device):
         sys.exit(1)
 
     # B. Model and Diffusion Setup
-    unet_model = UNet(in_channels=LATENT_CHANNELS, out_channels=LATENT_CHANNELS, features=FEATURES).to(device)
+    unet_model = UNet(in_channels=cfg['latent_channels'], out_channels=cfg['latent_channels'], features=cfg['features']).to(device)
     vae_encoder_func = get_vae_encoder_func(device) # VAE Encoder function
     
     # Initialize ForwardProcess (contains the subVP_SDE instance)
@@ -90,7 +85,7 @@ def setup(cfg: dict, data_path: str, device: torch.device):
     # D. Prepare Hparams for PL Module
     hparams = {
         'learning_rate': cfg['learning_rate'],
-        'vae_scale_factor': VAE_SCALE_FACTOR,
+        'vae_scale_factor': cfg['vae_scale_factor'],
         'n_timesteps': cfg['n_timesteps'],
         'is_probabilities': is_probabilities, # Pass the IS tensor through hparams for access in training_step
         'batch_size': cfg['batch_size'],
@@ -101,7 +96,7 @@ def setup(cfg: dict, data_path: str, device: torch.device):
     ldm_module = LDMLightningModule(
         unet_model=unet_model, 
         forward_process=forward_process, 
-        vae_encoder_func=vae_encoder_func, 
+        vae_encoder=vae_encoder_func, 
         hparams=hparams
     )
     
@@ -114,7 +109,7 @@ def main():
     # 1. Argument Parsing (Used for GCP Vertex AI Custom Job configuration)
     parser = argparse.ArgumentParser(description="PyTorch Lightning LDM Training")
     parser.add_argument('--data-path', type=str, required=True, help='Path to the dataset directory (GCS for cloud training).')
-    parser.add_argument('--config-path', type=str, default='configs/config.yaml', help='Path to the YAML configuration file.')
+    parser.add_argument('--config-path', type=str, default='experiments/config.yaml', help='Path to the YAML configuration file.')
     args = parser.parse_args()
 
     # 2. Load Configuration
@@ -131,18 +126,24 @@ def main():
 
     # 5. W&B Initialization (Key is read automatically from WANDB_API_KEY environment variable on GCP)
     wandb.init(
-        project=os.getenv("WANDB_PROJECT", "LDM Training"), 
+        project = "LDM Training",
+        #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
         config=cfg,
     )
     # The WandbLogger integrates logging with the PL Trainer
-    wandb_logger = WandbLogger(project=os.getenv("WANDB_PROJECT", "LDM Training"), log_model="all")
+    wandb_logger = WandbLogger(project = "LDM Training",
+        #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
+        log_model="all")
 
     # 6. Checkpoint Callback (Saves model states)
     # AIP_MODEL_DIR is the standard Vertex AI output path (e.g., gs://bucket/output_ldm_pl/)
     checkpoint_path = os.getenv("AIP_MODEL_DIR", './checkpoints/')
-    
+    interim_save_dir = os.path.join(checkpoint_path, 'interim')
+    os.makedirs(interim_save_dir, exist_ok=True)
+
+
     checkpoint_callback = ModelCheckpoint(
-        dirpath=checkpoint_path, 
+        dirpath=interim_save_dir, 
         filename='ldm-epoch{epoch:02d}-val_loss{val_loss:.4f}',
         monitor='val_loss',
         mode='min',
@@ -153,11 +154,13 @@ def main():
     # 7. Initialize Trainer (Optimized for T4/GCP Cost Saving)
     trainer = Trainer(
         logger=wandb_logger,
-        accelerator="gpu",
+        accelerator = "cuda",
+        #accelerator="gpu",
         devices=1,                      # Use 1 T4 GPU
         max_epochs=cfg['epochs'],
         precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback],
+        limit_train_batches=0.1, limit_val_batches=0.1 # --> we use it to test the code quickly
         # Example for quick debug run: limit_train_batches=0.1, limit_val_batches=0.1
     )
 
@@ -168,6 +171,22 @@ def main():
     # 9. Cleanup
     wandb.finish()
 
+    final_save_dir = os.path.join(checkpoint_path, 'weights')
+    model_name = cfg['model']
+    learning_rate = cfg['learning_rate']
+    timesteps = cfg['n_timesteps']
+    epochs = cfg['epochs']
+    lr_str = str(learning_rate).replace('.', '')
+    hyper_suffix = f"T{timesteps}_LR{lr_str}_E{epochs}"
+    final_model_filename = f"{model_name}_final_{hyper_suffix}.pth"
+
+    # Ensure the final save directory exists
+    os.makedirs(final_save_dir, exist_ok=True)
+    final_model_path = os.path.join(final_save_dir, final_model_filename)
+    torch.save({'state_dict': ldm_module.state_dict()}, final_model_path)
+    print(f"\n[FINAL SAVE] Final weights saved to: {final_model_path}")
+
 
 if __name__ == "__main__":
     main()
+    #python -m train --data-path="C:\Users\marco\Desktop\Magistrale\ERASMUS\COURSES TUM\Practicals\Hands on Generative AI\Project\Hands-on-Generative-AI\data\train2017" --config-path="experiments/base_config.yaml"

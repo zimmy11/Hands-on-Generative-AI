@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from components import SinusoidalPositionEmbeddings
+from .components import SinusoidalPositionEmbeddings
 
 # Residual Block
 class ResBlock(nn.Module):

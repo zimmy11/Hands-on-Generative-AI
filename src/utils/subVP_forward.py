@@ -1,8 +1,8 @@
 from typing import Optional, Tuple
 
 import torch
-from subVP_SDE import subVP_SDE
-from Configurations import ForwardConfig
+from .subVP_SDE import subVP_SDE
+from .Configurations import ForwardConfig
 
 class ForwardProcess:
     def __init__(self, beta_min: float = 0.1, beta_max: float = 20.0, N: int = 1000):

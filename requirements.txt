@@ -15,3 +15,9 @@ sentence-transformers>=2.2.0
 
 # --- Data Handling ---
 Pillow>=9.0.0
+
+# --- Training ---
+pytorch-lightning>=2.0.0
+wandb>=0.15.0
+pyyaml>=6.0
+scipy>=1.10.0
