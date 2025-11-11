@@ -65,7 +65,7 @@ def setup(cfg: dict, data_path: str, device: torch.device):
         sys.exit(1)
 
     # B. Model and Diffusion Setup
-    unet_model = UNet(in_channels=cfg['latent_channels'], out_channels=cfg['latent_channels'], features=cfg['features']).to(device)
+    unet_model = UNet(in_channels=cfg['latent_channels'], out_channels=cfg['latent_channels'], features=cfg['features'], ).to(device)
     vae_encoder_func = get_vae_encoder_func(device) # VAE Encoder function
     
     # Initialize ForwardProcess (contains the subVP_SDE instance)
@@ -123,12 +123,25 @@ def main():
     ldm_module, train_loader, val_loader = setup(cfg, args.data_path, device)
     
     # --- W&B and Logging Setup ---
+    model_name = cfg['model']
+    learning_rate = cfg['learning_rate']
+    timesteps = cfg['n_timesteps']
+    epochs = cfg['epochs']
+    self_attention = cfg['self_attention']
+    lr_str = str(learning_rate).replace('.', '')
+    hyper_suffix = f"T{timesteps}_LR{lr_str}_E{epochs}"
+
+    if self_attention:
+        hyper_suffix += "_SA"
+
 
     # 5. W&B Initialization (Key is read automatically from WANDB_API_KEY environment variable on GCP)
     wandb.init(
         project = "LDM Training",
         #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
         config=cfg,
+        name = f"{model_name}_{hyper_suffix}",
+        reinit=True
     )
     # The WandbLogger integrates logging with the PL Trainer
     wandb_logger = WandbLogger(project = "LDM Training",
@@ -172,12 +185,7 @@ def main():
     wandb.finish()
 
     final_save_dir = os.path.join(checkpoint_path, 'weights')
-    model_name = cfg['model']
-    learning_rate = cfg['learning_rate']
-    timesteps = cfg['n_timesteps']
-    epochs = cfg['epochs']
-    lr_str = str(learning_rate).replace('.', '')
-    hyper_suffix = f"T{timesteps}_LR{lr_str}_E{epochs}"
+
     final_model_filename = f"{model_name}_final_{hyper_suffix}.pth"
 
     # Ensure the final save directory exists

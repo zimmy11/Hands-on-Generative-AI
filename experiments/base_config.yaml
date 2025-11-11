@@ -17,7 +17,7 @@ image_size: 128             # IMAGE_SIZE (Input pixel size)
 vae_scale_factor: 0.18215   # VAE_SCALE_FACTOR
 validation_split_ratio: 0.2 # VALIDATION_SPLIT_RATIO
 features: [128, 256, 512]  # FEATURES (U-Net channel progression)
-
+self_attention: True     # SELF_ATTENTION (Enable self-attention layers)
 # --- DATA AND RESOURCE CONFIGURATION ---
 num_workers: 0        
 # Number of CPU workers for the DataLoader (Adjust based on GCP VM size)

@@ -29,7 +29,8 @@ class ResBlock(nn.Module):
         # Self-attention layer (optional)
         if self_attention:
             self.attention = nn.MultiheadAttention(embed_dim=channels, num_heads=4)
-
+            self.norm_attn = nn.LayerNorm(channels) # LayerNorm normalizes over the last dimension (C)
+            self.norm_res = nn.LayerNorm(channels)
 
     def forward(self, x, t_emb):
         identity = x
@@ -59,11 +60,14 @@ class ResBlock(nn.Module):
         if hasattr(self, "attention"):
             b, c, h, w = out.size()
             out_reshaped = out.view(b, c, h * w).permute(2, 0, 1)  # (h*w, b, c)
-            out_attended, _ = self.attention(out_reshaped, out_reshaped, out_reshaped)
+            # Apply LayerNorm
+            out_norm = self.norm_attn(out_reshaped)           
+            out_attended, _ = self.attention(out_norm, out_norm, out_norm)
+            out_attended = self.norm_res(out_attended)
             out = out_attended.permute(1, 2, 0).view(b, c, h, w)
 
         out += identity # Residual connection
-
+        out = self.act(out)
         return out
 
 
@@ -198,9 +202,8 @@ class UNet(nn.Module):
             if x.shape[-2:] != skip.shape[-2:]:
                     # simple interpolate to match
                     #_, _, h, w = x.shape
-                x = F.interpolate(x, size=skip.shape[-2:], mode='nearest')
+                x = F.interpolate(x, size=skip.shape[-2:], mode='bilinear', align_corners=False)            
             
-            #concat along channels
             x = torch.cat([x, skip], dim=1)
             for blk in blocks:
                 if isinstance(blk, nn.Conv2d):
