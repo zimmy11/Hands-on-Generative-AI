@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import typing import Callable, Tuple
 
 class subVP_SDE:
     def __init__(self, beta_min: float =0.1, beta_max: float =20, N: int =1000, schedule: str ="linear"):
@@ -30,6 +31,7 @@ class subVP_SDE:
     def beta(self, t: torch.Tensor) -> torch.Tensor:
         if self.schedule == "linear":
             return self.beta_0 + t * (self.beta_1 - self.beta_0)
+<<<<<<< Updated upstream
 
         if self.schedule == "exponential":
             k = t.new_tensor(self._k)
@@ -44,6 +46,46 @@ class subVP_SDE:
             k = t.new_tensor(self._k)
             beta0 = t.new_tensor(self.beta_0)
             return (beta0/k) * (torch.exp(k * t) - 1)
+=======
+
+        if self.schedule == "exponential":
+            k = t.new_tensor(self._k)
+            return t.new_tensor(self.beta_0) * torch.exp(k * t)
+    
+    def B(self, t: torch.Tensor) -> torch.Tensor:
+        """Compute B(t) = ∫_0^t β(s) ds for the chosen schedule."""
+        if self.schedule == "linear":
+            return t * self.beta_0 + 1/2 * t**2 * (self.beta_1 - self.beta_0)
+        
+        if self.schedule == "exponential":
+            k = t.new_tensor(self._k)
+            beta0 = t.new_tensor(self.beta_0)
+            return (beta0/k) * (torch.exp(k * t) - 1)
+        
+        raise ValueError("Error in scheduler setting.")
+    
+    def get_g_squared(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Computes the coefficient g(t)**2 which is specifically for subVP SDE
+        λ(t) is used in the SDE definition as the diffusion coefficient squared.
+        λ(t) = g(t)^2
+        """
+        beta_t = self.beta(t)
+        B_t = self.B(t)
+        discount = 1.0 - torch.exp(-2.0 * B_t)
+        g_squared = beta_t * discount
+        
+        return g_squared
+
+    #Compute the DDPM-style weight
+    def get_lambda_original(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Computes λ(t) = (1 - exp(-∫_0^t β(s) ds))^2 which is tipical of DDPM
+        """
+        B_t = self.B(t)
+        alpha_t = torch.exp(-B_t)
+        return (1 - alpha_t) ** 2
+>>>>>>> Stashed changes
             
     # Instanteneous SDE coefficients
     def subVP_sde(self, x, t):
@@ -60,6 +102,7 @@ class subVP_SDE:
         g(t) = sqrt(beta(t) * discount)
         """
         beta_t = self.beta(t)
+<<<<<<< Updated upstream
         B_t = self.B(t)
         drift = -0.5 * beta_t[:, None, None, None] * x
         discount = 1.0 - torch.exp(-2.0 * B_t)
@@ -68,12 +111,28 @@ class subVP_SDE:
         return drift, diffusion
 
     # Closed form formula for linear scheduler
+=======
+        drift = -0.5 * beta_t[:, None, None, None] * x
+        diffusion = self.get_g_squared(t)
+        
+        return drift, diffusion
+
+    # Closed form marginal
+    def mean_coeff(self, t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        return torch.exp(-0.5 * self.B(t))
+
+    def var(self, t: torch.Tensor) -> torch.Tensor:
+        s = 1 - torch.exp(-self.B(t))
+        return s**2
+    
+>>>>>>> Stashed changes
     def marginal_prob_subvp(self, x0: torch.Tensor, t: torch.Tensor):
         """
         Closed form X_t | X_0 for subVP with the chosen schedule.
         mean = exp(-0.5 B(t)) * x0
         std  = 1 - exp(-B(t))         (note: no sqrt for subVP)
         """
+<<<<<<< Updated upstream
         B_t = self.B(t)
         mean_coeff = torch.exp(-0.5 * B_t)
         std = 1.0 - torch.exp(-B_t)
@@ -81,6 +140,14 @@ class subVP_SDE:
         return mean, std
 
     # Closed form perturbation
+=======
+        mean_coeff = self.mean_coeff(t)
+        std = torch.sqrt(self.var(t))
+        mean = mean_coeff[:, None, None, None] * x0  # (B,C,H,W)
+        return mean, std
+
+    # Closed form forward perturbation
+>>>>>>> Stashed changes
     def perturb_closed(self, x_0: torch.Tensor, t, noise = None):
         """Sample X_t by perturbing X_0 with gaussian noise
 
@@ -132,6 +199,10 @@ class subVP_SDE:
             t_k = t_grid[k].expand(cnt)
             dt = (t_grid[k+1] - t_grid[k]).item() # we return a scalar value
             drift, diffusion = self.subVP_sde(x, t_k)
+<<<<<<< Updated upstream
+=======
+            diffusion = torch.sqrt(diffusion)
+>>>>>>> Stashed changes
             noise = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=gen) # we generate Gaussian Noise, with same device and dtype as x
             x = x + drift * dt + diffusion[:, None, None, None] * (dt ** 0.5) * noise
         
@@ -139,5 +210,50 @@ class subVP_SDE:
         mean_t, std_t = self.marginal_prob_subvp(x_0, t_tensor)
         eps_implied = (x - mean_t) / (std_t[:, None, None, None] +1e-12) #noise tensor
         return x, eps_implied, std_t
+<<<<<<< Updated upstream
+=======
+
+    # score target for likelihood-weighted DSM
+
+    # reverse SDE for Euler-Maruyama
+    def reverse_euler_step(self, x: torch.Tensor, t: torch.Tensor, dt: float, scores: torch.Tensor, gen: torch.Generator = None) -> torch.Tensor:
+        """
+        dx = [ -1/2 β(t) x  - g(t)^2 sθ(x,t) ] dt + g(t) dW̄
+        """
+        beta_t = self.beta(t)
+        g2 = self.get_g_squared(t)
+        drift = (-0.5 * beta_t[:, None, None, None] * x) - (g2[:, None, None, None] * scores)
+        noise = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=gen)
+        x = x + drift * dt + torch.sqrt(g2  * abs(dt))[:, None, None, None] * noise
+        return x
+
+    def probability_flow_euler_step(self, x: torch.Tensor, t: torch.Tensor, dt: float, scores: torch.Tensor):
+        """
+        Deterministic PF-ODE with Euler step:
+        dx = [ -1/2 β(t) x  - 1/2g(t)^2 sθ(x,t) ] dt
+        """
+
+        beta_t = self.beta(t)
+        g2 = self.get_g_squared(t)
+        drift = (-0.5 * beta_t[:, None, None, None] * x) - (0.5 * g2[:, None, None, None] * scores)
+        x = x + drift * dt
+        return x
+        
+    @torch.no_grad()
+    def corrector_langevin(self, x: torch.Tensor, t: torch.Tensor, scores: torch.Tensor, n_steps: int = 1, target_snr: float = 0.16, gen: torch.Generator = None):
+        """
+        x ← x + α s(x,t) + sqrt(2α) z, with α set to reach target SNR per batch.
+        """
+        for _ in range(n_steps):
+            noise = torch.randn(x.shape, device = x.device, dtype = x.dtype, generator = gen)
+            # per-sample adaptive step size
+            grad_norm = scores.flatten(1).norm(dim=1).clamp_min(1e-12)
+            noise_norm = noise.flatten(1).norm(dim=1).clamp_min(1e-12)
+            step_size = (target_snr * noise_norm / grad_norm) ** 2 *2.0
+            x = x + step_size[:, None, None, None] * scores + torch.sqrt(2.0 * step_size)[:, None, None, None] * noise
+        
+        return x
+    
+>>>>>>> Stashed changes
             
             
