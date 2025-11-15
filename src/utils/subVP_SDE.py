@@ -1,4 +1,4 @@
-import torch
+    import torch
 import numpy as np
 import typing import Callable, Tuple
 
@@ -31,22 +31,6 @@ class subVP_SDE:
     def beta(self, t: torch.Tensor) -> torch.Tensor:
         if self.schedule == "linear":
             return self.beta_0 + t * (self.beta_1 - self.beta_0)
-<<<<<<< Updated upstream
-
-        if self.schedule == "exponential":
-            k = t.new_tensor(self._k)
-            return t.new_tensor(self.beta_0) * torch.exp(k * t)
-    
-    def B(self, t: torch.Tensor) -> torch.Tensor:
-        """Compute B(t) = ∫_0^t β(s) ds for the chosen schedule."""
-        if self.schedule == "linear":
-             return t * self.beta_0 + 1/2 * t**2 * (self.beta_1 - self.beta_0)
-        
-        if self.schedule == "exponential":
-            k = t.new_tensor(self._k)
-            beta0 = t.new_tensor(self.beta_0)
-            return (beta0/k) * (torch.exp(k * t) - 1)
-=======
 
         if self.schedule == "exponential":
             k = t.new_tensor(self._k)
@@ -85,7 +69,6 @@ class subVP_SDE:
         B_t = self.B(t)
         alpha_t = torch.exp(-B_t)
         return (1 - alpha_t) ** 2
->>>>>>> Stashed changes
             
     # Instanteneous SDE coefficients
     def subVP_sde(self, x, t):
@@ -102,16 +85,6 @@ class subVP_SDE:
         g(t) = sqrt(beta(t) * discount)
         """
         beta_t = self.beta(t)
-<<<<<<< Updated upstream
-        B_t = self.B(t)
-        drift = -0.5 * beta_t[:, None, None, None] * x
-        discount = 1.0 - torch.exp(-2.0 * B_t)
-        diffusion = torch.sqrt(beta_t * discount)
-        
-        return drift, diffusion
-
-    # Closed form formula for linear scheduler
-=======
         drift = -0.5 * beta_t[:, None, None, None] * x
         diffusion = self.get_g_squared(t)
         
@@ -125,29 +98,18 @@ class subVP_SDE:
         s = 1 - torch.exp(-self.B(t))
         return s**2
     
->>>>>>> Stashed changes
     def marginal_prob_subvp(self, x0: torch.Tensor, t: torch.Tensor):
         """
         Closed form X_t | X_0 for subVP with the chosen schedule.
         mean = exp(-0.5 B(t)) * x0
         std  = 1 - exp(-B(t))         (note: no sqrt for subVP)
         """
-<<<<<<< Updated upstream
-        B_t = self.B(t)
-        mean_coeff = torch.exp(-0.5 * B_t)
-        std = 1.0 - torch.exp(-B_t)
-        mean = mean_coeff[:, None, None, None] * x0  # (B,C,H,W)
-        return mean, std
-
-    # Closed form perturbation
-=======
         mean_coeff = self.mean_coeff(t)
         std = torch.sqrt(self.var(t))
         mean = mean_coeff[:, None, None, None] * x0  # (B,C,H,W)
         return mean, std
 
     # Closed form forward perturbation
->>>>>>> Stashed changes
     def perturb_closed(self, x_0: torch.Tensor, t, noise = None):
         """Sample X_t by perturbing X_0 with gaussian noise
 
@@ -169,7 +131,7 @@ class subVP_SDE:
         x_t = mean + std[:,None, None, None] * noise
         return x_t, noise, std
 
-    # Euler - Maruyama simulation
+    #Forward Euler - Maruyama simulation
     def perturb_simulate_path(self, x_0: torch.Tensor, t_end: float = 0.5, steps: int = 500, seed: int = 42, eps: float = 1e-12):
         """Sample X_t by perturbing X_0 with gaussian noise at time t
 
@@ -199,10 +161,7 @@ class subVP_SDE:
             t_k = t_grid[k].expand(cnt)
             dt = (t_grid[k+1] - t_grid[k]).item() # we return a scalar value
             drift, diffusion = self.subVP_sde(x, t_k)
-<<<<<<< Updated upstream
-=======
             diffusion = torch.sqrt(diffusion)
->>>>>>> Stashed changes
             noise = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=gen) # we generate Gaussian Noise, with same device and dtype as x
             x = x + drift * dt + diffusion[:, None, None, None] * (dt ** 0.5) * noise
         
@@ -210,8 +169,6 @@ class subVP_SDE:
         mean_t, std_t = self.marginal_prob_subvp(x_0, t_tensor)
         eps_implied = (x - mean_t) / (std_t[:, None, None, None] +1e-12) #noise tensor
         return x, eps_implied, std_t
-<<<<<<< Updated upstream
-=======
 
     # score target for likelihood-weighted DSM
 
@@ -253,7 +210,65 @@ class subVP_SDE:
             x = x + step_size[:, None, None, None] * scores + torch.sqrt(2.0 * step_size)[:, None, None, None] * noise
         
         return x
+        
+    #-------------Likelihood computation-----------------------
+    def v_field(self, x, t, model):
+        """
+        Compute a vector field which represents the probability flow ODE:
+        dx/dt = v(x,t) = −1/2 β(t)x − 1/2 g(t)^2 s_θ(x,t)
+        
+        We assumed that:
+        - ∇_x log p_t(x) ≈ s_θ(x,t)
+        - g(x)^2 is the same as before
+        - β(t) is the same as before
+        """
+        beta_t = self.beta(t).view(-1, *([1] * (x.ndim - 1)))
+        # we are:
+        #1. taking number of non-batch dimensions: x.ndim-1, ex. (B,C,H,W) is 3
+        #2. building a list with many ones : [1] * (x.ndim - 1)
+        #3. changing shape like (B,1,1,1) from (-1, previous_list)
+        #4. we reshape the tensor with .view()
+        g2 = get_g_squared(t).view(-1, *([1] * (x.ndim -1)))
+        scores = model(x, t)
+        return -0.5 * beta_t * x - 0.5 *g2 * scores
+
+    def standard_normal_logprob(self, x):
+        """
+        Computing the log-density of a d-dimensional standard normal N(0,1) evaluated at x
+        Args:
+        - x \in R^d
+        - log N(0,I)(x) = -1/2 (∥x∥^2 + d log2π)
+        """
+        d = x[0].numel() # retrievs the flattened dimensionality per sample
+        return -0.5 * (x.view(x.size(0), -1).pow(2).sum(dim=1) + d * math.log(2 * math.pi))
     
->>>>>>> Stashed changes
-            
-            
+    def hutchinson_div_score(self, x, t, model):
+        """
+        Estimate the diverge of the score: ∇⋅s_θ(x,t) = tr J(x), where J(x) = ∂s_𝜃/∂x.
+
+        
+        For Hutchunson's Identity: e ~ N(0,I): tr J = E_e[e^T J e], the trace of the Jacobian is equal to the expected value, over epsilon, of epsilon-transposed J epsilon.
+        Args:
+        - e ~ N(0,I)
+        - ϕ(x)=⟨s_θ(x,t),e⟩ = ∑_i s_i(x,t)e_i
+        - jte = ∇_x φ(x), which is J(x)^Te by the chain rule
+        - then we can write ⟨(J^Te), e⟩ = e^TJe, which givs us an unbiased estimate of the trace of J
+        """
+        x = x. requires_grad_(True)
+        e = torch.randn_like(x)
+        scores = model(x, t)
+        jte = torch.autograd.grad((scores * e).sum(), x, create_graph = False, retain_graph = False)[0] # extracting the gradinent since jte has shape (x,)
+        div_est = (jte * e).view(x.size(0), -1).sum(dim=1)
+        x.requires_grad_(False)
+        return div_est
+
+    def likelihood_euler_step(self, x, t, d, model):
+        v = self.v_field(x, t, model)
+        beta_t = self.beta(t)
+        g2 = self.get_g_squared(t)
+        div_s = self.hutchinson_div_score(x, t, model)
+
+        # computing the divergnce(v)
+        div_v = -0.5 * beta_t * d - 0.5 * g2 * div_s
+
+        return v, div_v
