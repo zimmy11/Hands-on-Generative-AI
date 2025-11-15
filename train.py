@@ -1,7 +1,7 @@
 import os
 import sys
 import argparse
-import yaml
+#import yaml
 import torch
 from torch.utils.data import DataLoader, random_split
 from pytorch_lightning import Trainer
@@ -11,19 +11,15 @@ import wandb
 
 # Import all core components from your structured project modules
 from src.models.unet_model import UNet  # Your custom UNet model
-from src.utils.sde_utils import calculate_importance_sampling_probabilities, ForwardProcess 
+from src.utils.sde_utils import * 
 # from src.utils.subVP_forward import ForwardProcess   # Forward process with subVP_SDE
 from src.utils.vae_utils import get_vae_encoder_func # Function to load and return the VAE encoder
 from src.data.base_dataset import LatentDataset       # Your custom Dataset class
 from src.training.ldm_module import LDMLightningModule # Your PL module core
 
 
-# --- GLOBAL CONFIGURATION PLACEHOLDERS (Will be overridden by config.yaml) ---
-# These are just here for structural reference.
-
-
 # --- SETUP FUNCTION ---
-def setup(cfg: dict, data_path: str, device: torch.device):
+def setup(cfg: ForwardConfig, data_path: str, device: torch.device):
     """
     Sets up all model components, data loaders, and calculates the IS tensor.
     
@@ -41,10 +37,10 @@ def setup(cfg: dict, data_path: str, device: torch.device):
     # A. Data Loading & Splitting
     try:
         # Load the full dataset (assuming raw images are present in the directory)
-        full_dataset = LatentDataset(data_dir=data_path, image_size=cfg['image_size'])
+        full_dataset = LatentDataset(data_dir=data_path, image_size=cfg.image_size)
         
         # Define split sizes
-        val_size = int(cfg['validation_split_ratio'] * len(full_dataset))
+        val_size = int(cfg.validation_split_ratio * len(full_dataset))
         train_size = len(full_dataset) - val_size
         
         # Deterministic Split for reproducibility
@@ -54,8 +50,8 @@ def setup(cfg: dict, data_path: str, device: torch.device):
         )
         
         # Create DataLoaders
-        train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['num_workers'])
-        val_loader = DataLoader(val_dataset, batch_size=cfg['batch_size'], shuffle=False, num_workers=cfg['num_workers'])
+        train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=cfg.num_workers)
+        val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False, num_workers=cfg.num_workers)
 
         print(f"Dataset loaded: Total {len(full_dataset)} images.")
         print(f" -> Train Loader: {len(train_dataset)} images.")
@@ -65,30 +61,31 @@ def setup(cfg: dict, data_path: str, device: torch.device):
         sys.exit(1)
 
     # B. Model and Diffusion Setup
-    unet_model = UNet(in_channels=cfg['latent_channels'], out_channels=cfg['latent_channels'], features=cfg['features'], ).to(device)
+    unet_model = UNet(in_channels=cfg.latent_channels, out_channels=cfg.latent_channels, features=cfg.features, ).to(device)
     vae_encoder_func = get_vae_encoder_func(device) # VAE Encoder function
     
     # Initialize ForwardProcess (contains the subVP_SDE instance)
-    forward_process = ForwardProcess(beta_min=cfg['beta_min'], beta_max=cfg['beta_max'], N=cfg['n_timesteps'])
-    
+    forward_process = DiffusionProcesses(beta_min=cfg.beta_min, beta_max=cfg.beta_max, N=cfg.N)
+    sde = subVP_SDE(beta_min=cfg.beta_min, beta_max=cfg.beta_max, N=cfg.N)
+
     # C. Importance Sampling Calculation (IS)
     is_probabilities = None
-    if cfg['use_importance_sampling']:
+    if cfg.use_importance_sampling:
         print("2. Calculating Importance Sampling probabilities (g(t)^2 / lambda_orig(t))...")
         # forward_process.sde_model is the subVP_SDE instance required for calculation
         is_probabilities = calculate_importance_sampling_probabilities(
-            forward_process.sde_model, 
-            cfg['n_timesteps'], 
+            sde, 
+            cfg.N, 
             device
         )
 
     # D. Prepare Hparams for PL Module
     hparams = {
-        'learning_rate': cfg['learning_rate'],
-        'vae_scale_factor': cfg['vae_scale_factor'],
-        'n_timesteps': cfg['n_timesteps'],
+        'learning_rate': cfg.learning_rate,
+        'vae_scale_factor': cfg.vae_scale_factor,
+        'n_timesteps': cfg.N,
         'is_probabilities': is_probabilities, # Pass the IS tensor through hparams for access in training_step
-        'batch_size': cfg['batch_size'],
+        'batch_size': cfg.batch_size,
         'data_path': data_path
     }
 
@@ -113,8 +110,7 @@ def main():
     args = parser.parse_args()
 
     # 2. Load Configuration
-    with open(args.config_path, 'r') as f:
-        cfg = yaml.safe_load(f)
+    cfg = ForwardConfig()
 
     # 3. Device Setup
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -123,11 +119,11 @@ def main():
     ldm_module, train_loader, val_loader = setup(cfg, args.data_path, device)
     
     # --- W&B and Logging Setup ---
-    model_name = cfg['model']
-    learning_rate = cfg['learning_rate']
-    timesteps = cfg['n_timesteps']
-    epochs = cfg['epochs']
-    self_attention = cfg['self_attention']
+    model_name = cfg.model
+    learning_rate = cfg.learning_rate
+    timesteps = cfg.N
+    epochs = cfg.epochs
+    self_attention = cfg.self_attention
     lr_str = str(learning_rate).replace('.', '')
     hyper_suffix = f"T{timesteps}_LR{lr_str}_E{epochs}"
 
@@ -170,10 +166,10 @@ def main():
         accelerator = "cuda",
         #accelerator="gpu",
         devices=1,                      # Use 1 T4 GPU
-        max_epochs=cfg['epochs'],
+        max_epochs=cfg.epochs,
         precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback],
-        limit_train_batches=0.5, limit_val_batches=0.5 # --> we use it to test the code quickly
+        limit_train_batches=0.1, limit_val_batches=0.1 # --> we use it to test the code quickly
         # Example for quick debug run: limit_train_batches=0.1, limit_val_batches=0.1
     )
 

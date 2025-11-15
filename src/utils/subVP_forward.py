@@ -9,12 +9,7 @@ class ForwardProcess:
         self.beta_min = beta_min
         self.beta_max = beta_max
         self.N = N
-<<<<<<< HEAD
-        self.sde_model = subVP_SDE(beta_min=beta_min, beta_max=beta_max, N=N)
-
-=======
         self.schedule = schedule
->>>>>>> origin/Diffusion_processes
 
     @torch.no_grad()
     def get_noised_latents(self, z0: torch.Tensor, t: torch.Tensor, final: bool = False, eps: float = 1e-5, closed_formula : bool = True, steps: int = 500, seed: int = 42, sde_cfg: ForwardConfig = ForwardConfig()) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -71,6 +66,6 @@ class ForwardProcess:
     
         sde_cfg = ForwardProcess(cfg.beta_min,cfg.beta_max, cfg.N)
     
-        z_t, epsilon, std = get_noised_latents(z0, t = cfg.t, final = cfg.final, eps = cfg.eps, closed_formula = cfg.closed_formula, steps = cfg.N, seed = cfg.seed, sde_cfg = sde_cfg)
+        z_t, epsilon, std = sde_cfg.get_noised_latents(z0, t = cfg.t, final = cfg.final, eps = cfg.eps, closed_formula = cfg.closed_formula, steps = cfg.N, seed = cfg.seed, sde_cfg = sde_cfg)
     
         torch.save(z_t, cfg.output_path)

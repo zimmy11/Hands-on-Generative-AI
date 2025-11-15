@@ -4,8 +4,10 @@ import torch
 import pytorch_lightning as pl
 from torch import nn
 from typing import Optional
-from src.utils.sde_utils import ForwardProcess, calculate_importance_sampling_probabilities,  subVP_SDE
-from src.models.unet_model import UNet
+from src.utils.sde_utils import *
+
+
+#from src.models.unet_model import UNet
 
 # Assume these are imported from sde_utils and unet
 # from .sde_utils import ForwardProcess, subVP_SDE
@@ -23,7 +25,7 @@ class LDMLightningModule(pl.LightningModule):
         self.forward_process = forward_process # Instance of ForwardProcess
         self.criterion = nn.MSELoss(reduction='none') # Loss must be 'none' for per-sample weighting
         
-        # VAE Encoder Function (must be defined in vae_utils and include scaling)
+        # VAE Encoder Function (defined in vae_utils)
         self.encode_latents = vae_encoder
         
         # Config Params
@@ -56,10 +58,8 @@ class LDMLightningModule(pl.LightningModule):
             # Uniform Sampling (Fallback/Plain Likelihood Weighting)
             t = torch.rand(batch_size, device=device)
 
-        # 3. Perturb data (Forward Process)
-        epsilon_true = torch.randn_like(x_start_latents)
         # Call the corrected method (z0, t, noise)
-        x_t, _, std_t = self.forward_process.get_noised_latents(x_start_latents, t, epsilon_true)
+        x_t, epsilon_true, std, sde  = self.forward_process.run_forward(x_start_latents, without_likelihood = True)
 
         # 4. Network prediction (epsilon_pred)
         epsilon_pred = self(x_t, t)
@@ -68,7 +68,7 @@ class LDMLightningModule(pl.LightningModule):
         per_sample_loss = self.criterion(epsilon_pred, epsilon_true)
         
         # 6. Likelihood Weighting (λ(t) = g(t)^2)
-        g_squared_tensor = self.forward_process.sde_model.get_g_squared(t)
+        g_squared_tensor = sde.get_g_squared(t)
         
         # Reshape for broadcasting (B, 1, 1, 1)
         weighting_factor = g_squared_tensor[:, None, None, None] 

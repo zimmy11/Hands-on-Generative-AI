@@ -1,8 +1,10 @@
 from typing import Optional, Tuple
-
 import torch
-from subVP_SDE import subVP_SDE
-from Configurations import ForwardConfig, ReverseConfig
+from .subVP_SDE import subVP_SDE
+from .Configurations import ForwardConfig, ReverseConfig, LikelihoodConfig
+import torch.nn as nn
+
+
 
 class DiffusionProcesses:
     def __init__(self, beta_min: float = 0.1, beta_max: float = 20.0, N: int = 1000, schedule: str = "linear"):
@@ -12,7 +14,7 @@ class DiffusionProcesses:
         self.schedule = schedule
 
     @torch.no_grad()
-    def get_noised_latents(z0: torch.Tensor, t: float = None, final: bool = False, eps: float = 1e-5, closed_formula : bool = True, steps: int = 500, seed: int = 42, sde_cfg: ForwardConfig = ForwardConfig()) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def get_noised_latents(self, z0: torch.Tensor, cfg):
         """Return noised latents z_t, along with the exact epsilon used and std(t).
         
         Inputs:
@@ -32,41 +34,47 @@ class DiffusionProcesses:
         - Deterministic given z0, t, and a fixed epsilon.
         - Useful for reproducible corruption by reusing returned epsilon.
         """
-        if final:
-            t_val = 1.0 - float(eps)
+
+        if cfg.final:
+            t_val = 1.0 - float(cfg.eps)
         else:
-            t_val = 0.5 if t is None else float(t)
+            t_val = 0.5 if cfg.t is None else float(cfg.t)
 
         # Building the SDE on the same device of the latent vector
-        sde = subVP_SDE(beta_min=sde_cfg.beta_min, beta_max=sde_cfg.beta_max, N=sde_cfg.N)
+        sde = subVP_SDE(beta_min=cfg.beta_min, beta_max=cfg.beta_max, N=cfg.N)
 
-        if closed_formula:
+        if cfg.closed_formula:
             t_tensor = torch.full((z0.size(0),), t_val, device=z0.device, dtype=z0.dtype)
             z_t, epsilon, std = sde.perturb_closed(z0, t_tensor)
         else:
             # t_tensor = torch.tensor([t_val], device=z0.device, dtype=z0.dtype)
-            z_t, epsilon, std = sde.perturb_simulate_path(z0, t_val, steps = steps, seed = seed)
+            z_t, epsilon, std = sde.perturb_simulate_path(z0, t_val, steps = cfg.steps, seed = cfg.seed)
         
-        return z_t, epsilon, std
+        return z_t, epsilon, std, sde
 
-     @torch.no_grad()
-    def run_forward(self, cfg: ForwardConfig) -> str:
+    @torch.no_grad()
+    def run_forward(self, z0, without_likelihood = True):
         """
         Execute the forward process for the latent noised variables with the parameters passed in Configurations
         """
-        z0 = torch.load(cfg.input_path, map_location="cpu")
-        z_t, epsilon, std = self.get_noised_latents(
-            z0,
-            t=cfg.t,
-            final=cfg.final,
-            eps=cfg.eps,
-            closed_formula=cfg.closed_formula,
-            steps=cfg.N,
-            seed=cfg.seed,
-            sde_cfg=self,
-        )
-        torch.save(z_t, cfg.output_path)
-        return cfg.output_path
+
+
+        if without_likelihood:
+            cfg = ForwardConfig()
+            z_t, epsilon, std, sde = self.get_noised_latents(
+                z0, cfg
+            )
+            
+             #torch.save(z_t, cfg.output_path)
+
+        # else: 
+        #     cfg = LikelihoodConfig()
+
+        #     likelihood = self.loglikelihood_subvp_ode(z0, model, cfg)
+
+
+
+        return z_t, epsilon, std, sde
     
     def sample_reverse(self, cfg: ReverseConfig, model: nn.Module):
         if device is None: device = torch.device('cpu')
@@ -84,7 +92,7 @@ class DiffusionProcesses:
         model = model.to(device = device, dtype = dtype).eval()
         
         #Reverse process loop
-        with torch.no_grad()
+        with torch.no_grad():
             for k in range(cfg.steps):
                 t_k = t_grid[k].expand(cfg.shape[0])
                 t_k1 = t_grid[k+1].expand(cfg.shape[0])
@@ -103,42 +111,44 @@ class DiffusionProcesses:
         return x
 
         
-        def run_reverse(self, cfg: ReverseConfig, model:nn.Module):
-            return self.sample_reverse(cfg, model)
+    def run_reverse(self, model:nn.Module):
+        cfg = ReverseConfig()
+        return self.sample_reverse(cfg, model)
 
-        def loglikelihood_subvp_ode(x0, model: nn.Module, lcfg: LikelihoodConfig):
-            """
-            Integrating the ODE for x_t and simultaneously, the log-density via the instantaneous change of variable formula: ODE x^ = v(x,t)
-            d logpt(x_t)/dt = −∇⋅v(x_t,t)
-            Therefore:
-            log p_0(x_0) = log p_T(x_T) + ∫_0^T ∇⋅v(x_t,t)dt
-            """
-            if lcfg.device is None:
-                device = x0.device()
-            else:
-                lcfg.device
-            
-            B_size = x0.size(0)
-            d = x0[0].numel()
-            x = x0.clone()
 
-            #Accumulate the intgral of divergence(v)
-            log_det = torch.zeros(B_size, device=device)
-            t_grid = torch.linspace(0.0, 1.0, steps + 1, device = device)
-            
-            ode = subVP_SDE(beta_min=lcfg.beta_min, beta_max=lcfg.beta_max, N=lcfg.N)
-            
-            for k in range(steps):
-                t = t_grid[k].expand(B_size)
-                dt = (t_grid[k+1] - t_grid[k]).item()
+    def loglikelihood_subvp_ode(x0, model: nn.Module, lcfg: LikelihoodConfig):
+        """
+        Integrating the ODE for x_t and simultaneously, the log-density via the instantaneous change of variable formula: ODE x^ = v(x,t)
+        d logpt(x_t)/dt = −∇⋅v(x_t,t)
+        Therefore:
+        log p_0(x_0) = log p_T(x_T) + ∫_0^T ∇⋅v(x_t,t)dt
+        """
+        if lcfg.device is None:
+            device = x0.device()
+        else:
+            lcfg.device
+        
+        B_size = x0.size(0)
+        d = x0[0].numel()
+        x = x0.clone()
 
-                v, div_v = ode.likelihood_euler_step(x, t, d, model)
+        #Accumulate the intgral of divergence(v)
+        log_det = torch.zeros(B_size, device=device)
+        t_grid = torch.linspace(0.0, 1.0, lcfg.steps + 1, device = device)
+        
+        ode = subVP_SDE(beta_min=lcfg.beta_min, beta_max=lcfg.beta_max, N=lcfg.N)
+        
+        for k in range(lcfg.steps):
+            t = t_grid[k].expand(B_size)
+            dt = (t_grid[k+1] - t_grid[k]).item()
 
-                x = x + v * dt
-                log_det = log_det + div_v * dt
-            
-            log_pT = sde.standard_normal_logprob(x)
-            return log_pT + log_det
+            v, div_v = ode.likelihood_euler_step(x, t, d, model)
 
-                
+            x = x + v * dt
+            log_det = log_det + div_v * dt
+        
+        log_pT = ode.standard_normal_logprob(x)
+        return log_pT + log_det
+
             
+        

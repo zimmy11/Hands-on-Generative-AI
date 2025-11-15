@@ -1,7 +1,7 @@
-    import torch
+import torch
 import numpy as np
-import typing import Callable, Tuple
-
+from typing import Callable, Tuple
+ 
 class subVP_SDE:
     def __init__(self, beta_min: float =0.1, beta_max: float =20, N: int =1000, schedule: str ="linear"):
         """Construct the sub-VP SDE
