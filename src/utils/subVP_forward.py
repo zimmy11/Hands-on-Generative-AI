@@ -5,12 +5,16 @@ from .subVP_SDE import subVP_SDE
 from .Configurations import ForwardConfig
 
 class ForwardProcess:
-    def __init__(self, beta_min: float = 0.1, beta_max: float = 20.0, N: int = 1000):
+    def __init__(self, beta_min: float = 0.1, beta_max: float = 20.0, N: int = 1000, schedule: str = "linear"):
         self.beta_min = beta_min
         self.beta_max = beta_max
         self.N = N
+<<<<<<< HEAD
         self.sde_model = subVP_SDE(beta_min=beta_min, beta_max=beta_max, N=N)
 
+=======
+        self.schedule = schedule
+>>>>>>> origin/Diffusion_processes
 
     @torch.no_grad()
     def get_noised_latents(self, z0: torch.Tensor, t: torch.Tensor, final: bool = False, eps: float = 1e-5, closed_formula : bool = True, steps: int = 500, seed: int = 42, sde_cfg: ForwardConfig = ForwardConfig()) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
