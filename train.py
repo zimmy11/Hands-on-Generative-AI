@@ -173,7 +173,7 @@ def main():
         max_epochs=cfg['epochs'],
         precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback],
-        limit_train_batches=0.1, limit_val_batches=0.1 # --> we use it to test the code quickly
+        limit_train_batches=0.5, limit_val_batches=0.5 # --> we use it to test the code quickly
         # Example for quick debug run: limit_train_batches=0.1, limit_val_batches=0.1
     )
 

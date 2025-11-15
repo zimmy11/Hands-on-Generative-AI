@@ -44,6 +44,7 @@ class ResBlock(nn.Module):
 
 
         out = self.conv1(x)
+        # GroupNorm + AdaGN (FiLM modulation)
         out = self.norm1(out) * (1 + gamma1) + beta1
         out = self.act(out)
 
@@ -53,18 +54,25 @@ class ResBlock(nn.Module):
 
         out = self.conv2(out)
         out = self.norm2(out) * (1 + gamma2) + beta2
-        out = self.act(out)
+        #out = self.act(out)
 
      
         
         if hasattr(self, "attention"):
             b, c, h, w = out.size()
-            out_reshaped = out.view(b, c, h * w).permute(2, 0, 1)  # (h*w, b, c)
+            attention_residual = out
+            # (b, h*w, c) only for the Layer Norm
+            out_reshaped = out.view(b, c, h * w).permute(0, 2, 1)  
             # Apply LayerNorm
-            out_norm = self.norm_attn(out_reshaped)           
+            # (h*w, b, c) for the attention function
+            out_norm = self.norm_attn(out_reshaped).permute(1, 0, 2)           
             out_attended, _ = self.attention(out_norm, out_norm, out_norm)
+
+            # (b, h*w, c) for the residual connection
+            out_attended = out_attended.permute(1, 0, 2) + out_reshaped
             out_attended = self.norm_res(out_attended)
-            out = out_attended.permute(1, 2, 0).view(b, c, h, w)
+            out = out_attended.permute(0, 2, 1).view(b, c, h, w)
+            out += attention_residual
 
         out += identity # Residual connection
         out = self.act(out)
