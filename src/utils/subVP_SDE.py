@@ -62,13 +62,13 @@ class subVP_SDE:
         return g_squared
 
     #Compute the DDPM-style weight
-    def get_lambda_original(self, t: torch.Tensor) -> torch.Tensor:
+    def get_alpha_original(self, t: torch.Tensor) -> torch.Tensor:
         """
-        Computes λ(t) = (1 - exp(-∫_0^t β(s) ds))^2 which is tipical of DDPM
+        Computes alpha(t) = (exp(-∫_0^t β(s) ds))
         """
         B_t = self.B(t)
-        alpha_t = torch.exp(-B_t)
-        return (1 - alpha_t) ** 2
+        alpha_t = torch.exp(-0.5 * B_t)
+        return alpha_t ** 2
             
     # Instanteneous SDE coefficients
     def subVP_sde(self, x, t):
