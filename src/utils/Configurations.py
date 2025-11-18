@@ -27,8 +27,8 @@ class ForwardConfig:
         num_workers: int = 0,
         data_path: str = "./data/coco2017/train2017",
         # training-related (potrebbero non essere usati direttamente qui ma utili a livello globale)
-        epochs: int = 50,
-        learning_rate: float = 0.0001,
+        epochs: int = 100,
+        learning_rate: float = 0.0003,
         batch_size: int = 64,
         model: str = "LDM"
     ):

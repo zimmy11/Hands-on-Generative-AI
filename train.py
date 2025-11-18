@@ -5,7 +5,7 @@ import argparse
 import torch
 from torch.utils.data import DataLoader, random_split
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 import wandb
 
@@ -79,7 +79,7 @@ def setup(cfg: ForwardConfig, data_path: str, device: torch.device):
             device
         )
 
-    # D. Prepare Hparams for PL Module
+    # D. Prepare Hparams for PL Module & Early Stopping
     hparams = {
         'learning_rate': cfg.learning_rate,
         'vae_scale_factor': cfg.vae_scale_factor,
@@ -89,12 +89,22 @@ def setup(cfg: ForwardConfig, data_path: str, device: torch.device):
         'data_path': data_path
     }
 
+    patience = cfg.early_stopping_patience or 10
+
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=patience,
+        verbose=True,
+        mode='min'
+    )
+
     # E. Instantiate Lightning Module
     ldm_module = LDMLightningModule(
         unet_model=unet_model, 
         forward_process=forward_process, 
         vae_encoder=vae_encoder_func, 
-        hparams=hparams
+        hparams=hparams,
+        callbacks =[early_stopping] 
     )
     
     return ldm_module, train_loader, val_loader
@@ -106,7 +116,6 @@ def main():
     # 1. Argument Parsing (Used for GCP Vertex AI Custom Job configuration)
     parser = argparse.ArgumentParser(description="PyTorch Lightning LDM Training")
     parser.add_argument('--data-path', type=str, required=True, help='Path to the dataset directory (GCS for cloud training).')
-    parser.add_argument('--config-path', type=str, default='experiments/config.yaml', help='Path to the YAML configuration file.')
     args = parser.parse_args()
 
     # 2. Load Configuration
@@ -169,7 +178,7 @@ def main():
         max_epochs=cfg.epochs,
         precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback],
-        limit_train_batches=0.1, limit_val_batches=0.1 # --> we use it to test the code quickly
+        limit_train_batches=0.5, limit_val_batches=0.5 # --> we use it to test the code quickly
         # Example for quick debug run: limit_train_batches=0.1, limit_val_batches=0.1
     )
 
@@ -193,4 +202,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    #python -m train --data-path="C:\Users\marco\Desktop\Magistrale\ERASMUS\COURSES TUM\Practicals\Hands on Generative AI\Project\Hands-on-Generative-AI\data\train2017" --config-path="experiments/base_config.yaml"
+    #python -m train --data-path="C:\Users\marco\Desktop\Magistrale\ERASMUS\COURSES TUM\Practicals\Hands on Generative AI\Project\Hands-on-Generative-AI\data\train2017"
