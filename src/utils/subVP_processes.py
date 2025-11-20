@@ -1,7 +1,7 @@
 from typing import Optional, Tuple
 import torch
-from subVP_SDE import subVP_SDE
-from Configurations import ForwardConfig, ReverseConfig, LikelihoodConfig
+from src.utils.subVP_SDE import subVP_SDE
+from src.utils.Configurations import ForwardConfig, ReverseConfig, LikelihoodConfig
 import torch.nn as nn
 
 import time
@@ -94,11 +94,11 @@ class DiffusionProcesses:
         
         start_time_fixed = time.time()
         start_time = time.time()
-        n_steps = 
+        n_steps = cfg.N//10
         #Reverse process loop
         with torch.no_grad():
             for k in range(cfg.steps):
-                if k%n_steps == 0:
+                if k % n_steps == 0:
                     time_elapsed, start_time = time.time() - start_time, time.time()
                     print(f"Summary stats:\nSteps done: {k}\nTime of last {n_steps} steps: {time_elapsed}\nAverage time of last {n_steps} steps: {time_elapsed/n_steps}\nOverall time:{time.time()-start_time_fixed}")
                 t_k = t_grid[k].expand(cfg.shape[0])
