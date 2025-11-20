@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from typing import Callable, Tuple
+import torch.nn as nn
  
 class subVP_SDE:
     def __init__(self, beta_min: float =0.1, beta_max: float =20, N: int =1000, schedule: str ="linear"):
@@ -68,7 +69,7 @@ class subVP_SDE:
         """
         B_t = self.B(t)
         alpha_t = torch.exp(-0.5 * B_t)
-        return alpha_t ** 2
+        return alpha_t# changed from squared
             
     # Instanteneous SDE coefficients
     def subVP_sde(self, x, t):
@@ -211,8 +212,8 @@ class subVP_SDE:
         
         return x
         
-    #-------------Likelihood computation-----------------------
-    def v_field(self, x, t, model):
+    #-------------Reverse Likelihood computation-----------------------
+    def v_field(self, x: torch.Tensor, t: torch.Tensor, scores: torch.Tensor):
         """
         Compute a vector field which represents the probability flow ODE:
         dx/dt = v(x,t) = −1/2 β(t)x − 1/2 g(t)^2 s_θ(x,t)
@@ -232,17 +233,19 @@ class subVP_SDE:
         scores = model(x, t)
         return -0.5 * beta_t * x - 0.5 *g2 * scores
 
-    def standard_normal_logprob(self, x):
+    def standard_normal_logprob(self, x: torch.Tensor):
         """
         Computing the log-density of a d-dimensional standard normal N(0,1) evaluated at x
         Args:
-        - x \in R^d
+        - x in R^dWhy 
         - log N(0,I)(x) = -1/2 (∥x∥^2 + d log2π)
         """
         d = x[0].numel() # retrievs the flattened dimensionality per sample
-        return -0.5 * (x.view(x.size(0), -1).pow(2).sum(dim=1) + d * math.log(2 * math.pi))
+        batch_size = x.size(0)
+        quadratic = x.view(batch_size, -1).pow(2).sum(dim=1)
+        return -0.5 * (quadratic + d * math.log(2 * math.pi))
     
-    def hutchinson_div_score(self, x, t, model):
+    def hutchinson_div_score(self, x: torch.Tensor, t: torch.Tensor, scores: torch.Tensor, estimator = "rademacher"):
         """
         Estimate the diverge of the score: ∇⋅s_θ(x,t) = tr J(x), where J(x) = ∂s_𝜃/∂x.
 
@@ -254,21 +257,42 @@ class subVP_SDE:
         - jte = ∇_x φ(x), which is J(x)^Te by the chain rule
         - then we can write ⟨(J^Te), e⟩ = e^TJe, which givs us an unbiased estimate of the trace of J
         """
-        x = x. requires_grad_(True)
-        e = torch.randn_like(x)
-        scores = model(x, t)
-        jte = torch.autograd.grad((scores * e).sum(), x, create_graph = False, retain_graph = False)[0] # extracting the gradinent since jte has shape (x,)
-        div_est = (jte * e).view(x.size(0), -1).sum(dim=1)
-        x.requires_grad_(False)
-        return div_est
+        x_req = x.detach().requires_grad_(True)
+        v_req = self.v_field(x, t, scores.detach())
 
-    def likelihood_euler_step(self, x, t, d, model):
+        if estimator == "gaussian":
+            e = torch.randn_like(x)
+        elif estimator == "rademacher":
+            e = (torch.randint_like(x_req, low=0, high=2, dtype=torch.int64).float() * 2.0 - 1.0)
+        else:
+            raise ValueError
+
+        # Vector-Jacobian Product
+        dot  = (v_req * e).sum()
+        jte = torch.autograd.grad(dot, x_req, create_graph = True)[0]
+        div_s = (jte * e).flatten(1).sum(dim=1) 
+        return div_s
+
+    def likelihood_euler_step(self, x: torch.Tensor, t: torch.Tensor, model: nn.Module, estimator = "rademacher"):
+        """
+        One Euler step payload for likelihood ODE integration.
+        Returns:
+          v(x,t): PF-ODE drift
+          div_v:  Hutchinson trace estimate of div v(x,t)
+        Assumes model predicts eps; converts to score with std_t from subVP marginal.
+        """
+        _, std_t = self.marginal_prob_subvp(x, t)
+        eps_pred = model(x, t)
+        scores = eps_pred / (std_t[:, None, None, None] + 1e-20)
+
+        # PF-ODE drigt
         v = self.v_field(x, t, model)
-        beta_t = self.beta(t)
-        g2 = self.get_g_squared(t)
-        div_s = self.hutchinson_div_score(x, t, model)
-
+        
+        # beta_t = self.beta(t)
+        # g2 = self.get_g_squared(t)
+        div_v = self.hutchinson_div_score(x, t, scores, estimator) # per batch divergence
+        
         # computing the divergnce(v)
-        div_v = -0.5 * beta_t * d - 0.5 * g2 * div_s
-
+        # div_v = -0.5 * beta_t * d - 0.5 * g2 * div_s
+        
         return v, div_v

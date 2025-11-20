@@ -1,9 +1,10 @@
 from typing import Optional, Tuple
 import torch
-from .subVP_SDE import subVP_SDE
-from .Configurations import ForwardConfig, ReverseConfig, LikelihoodConfig
+from src.utils.subVP_SDE import subVP_SDE
+from src.utils.Configurations import ForwardConfig, ReverseConfig, LikelihoodConfig
 import torch.nn as nn
 
+import time
 
 
 class DiffusionProcesses:
@@ -77,8 +78,8 @@ class DiffusionProcesses:
         return z_t, epsilon, std, sde
     
     def sample_reverse(self, cfg: ReverseConfig, model: nn.Module):
-        if device is None: device = torch.device('cpu')
-        if dtype is None: dtype = torch.float32
+        device = next(model.parameters()).device
+        dtype = torch.float32
 
         sde = subVP_SDE(beta_min=cfg.beta_min, beta_max=cfg.beta_max, N=cfg.N)
         
@@ -91,14 +92,23 @@ class DiffusionProcesses:
 
         model = model.to(device = device, dtype = dtype).eval()
         
+        start_time_fixed = time.time()
+        start_time = time.time()
+        n_steps = cfg.N//10
         #Reverse process loop
         with torch.no_grad():
             for k in range(cfg.steps):
+                if k % n_steps == 0:
+                    time_elapsed, start_time = time.time() - start_time, time.time()
+                    print(f"Summary stats:\nSteps done: {k}\nTime of last {n_steps} steps: {time_elapsed}\nAverage time of last {n_steps} steps: {time_elapsed/n_steps}\nOverall time:{time.time()-start_time_fixed}")
                 t_k = t_grid[k].expand(cfg.shape[0])
                 t_k1 = t_grid[k+1].expand(cfg.shape[0])
-                dt = (t_k1 - t_k).item()
+                dt = (t_k1[0] - t_k[0])
     
-                scores = model(x, t_k)
+                _, std_t = sde.marginal_prob_subvp(x, t_k)
+
+                eps_pred = model(x, t_k)
+                scores = - eps_pred / (std_t[:, None, None, None] + 1e-12)
                 
                 #Predictor
                 if cfg.rev_type == "sde":
@@ -116,21 +126,16 @@ class DiffusionProcesses:
         return self.sample_reverse(cfg, model)
 
 
-    def loglikelihood_subvp_ode(x0, model: nn.Module, lcfg: LikelihoodConfig):
+    def loglikelihood_subvp_ode(x0: torch.Tensor, model: nn.Module, lcfg: LikelihoodConfig):
         """
         Integrating the ODE for x_t and simultaneously, the log-density via the instantaneous change of variable formula: ODE x^ = v(x,t)
         d logpt(x_t)/dt = −∇⋅v(x_t,t)
         Therefore:
         log p_0(x_0) = log p_T(x_T) + ∫_0^T ∇⋅v(x_t,t)dt
         """
-        if lcfg.device is None:
-            device = x0.device()
-        else:
-            lcfg.device
-        
+        device = lcfg.device
+        x0 = x0.detach().to(device).clone()
         B_size = x0.size(0)
-        d = x0[0].numel()
-        x = x0.clone()
 
         #Accumulate the intgral of divergence(v)
         log_det = torch.zeros(B_size, device=device)
@@ -142,12 +147,13 @@ class DiffusionProcesses:
             t = t_grid[k].expand(B_size)
             dt = (t_grid[k+1] - t_grid[k]).item()
 
-            v, div_v = ode.likelihood_euler_step(x, t, d, model)
+            v, div_v = ode.likelihood_euler_step(x, t, model, estimator = lcfg.estimator)
 
             x = x + v * dt
             log_det = log_det + div_v * dt
         
         log_pT = ode.standard_normal_logprob(x)
+        
         return log_pT + log_det
 
             
