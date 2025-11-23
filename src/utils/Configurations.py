@@ -157,7 +157,10 @@ class ReverseConfig:
         epochs: int = 50,
         learning_rate: float = 0.0001,
         batch_size: int = 64,
-        model: str = "LDM"
+        model: str = "LDM",
+        corrector : bool = False,
+        n_corr: int = 50,
+        target_snr: float = 0.16 # this was found to be the optimal for VP and subVP by Yang Song
     ):
         self.output_path = output_path
         self.scores = scores
@@ -192,3 +195,8 @@ class ReverseConfig:
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.model = model
+
+        # corrector
+        self.corrector = corrector
+        self.n_corr = n_corr
+        self.target_snr = target_snr
