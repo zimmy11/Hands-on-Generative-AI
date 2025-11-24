@@ -108,11 +108,159 @@ def main():
     # 1. Argument Parsing (Used for GCP Vertex AI Custom Job configuration)
     parser = argparse.ArgumentParser(description="PyTorch Lightning LDM Training")
     parser.add_argument('--data-path', type=str, required=True, help='Path to the dataset directory (GCS for cloud training).')
+    parser.add_argument('../../experiments', type=str, default='./base_config.yaml', help='Path to the YAML config file.')
     args = parser.parse_args()
 
-    # 2. Load Configuration
-    cfg = ForwardConfig()
+    # Loading the configuraitons
+    print(f"Loading configuration from: {args.config_path}")
+    with open(args.config_path, 'r') as f:
+        yaml_config = yaml.safe_load(f)
 
+    # Diffusion processes
+    beta_min = yaml_config.get('beta_min', 0.1)
+    beta_max = yaml_config.get('beta_max', 20.0)
+    N_timesteps = yaml_config.get('n_timesteps', 1000)
+    schedule = yaml_config.get("schedule", "linear")
+    seed = yaml_config.get("seed", 42)
+
+    # Forward specific parameters
+    t_forward = yaml_config.get('t_forward', 1.0)
+    final = yaml_config.get('final', True)
+    eps = yaml_config.get('eps', 1e-5)
+    closed_formula = yaml_config.get("closed_formula", True)
+    
+    # Reverse and Likelihood parameters
+    t_0 = yaml_config.get('t_0', 1.0)
+    t_1 = yaml_config.get('t_1', 0.0)
+    corrector = yaml_config.get('corrector', False)
+    n_corr = yaml_config.get('corrector', 50)
+    target_snr = yaml_config.get('target_snr', 0.16)
+    rev_type = yaml_config.get('rev_type', 'sde')
+
+    # Training Params
+    epochs = yaml_config.get('epochs', 50)
+    lr = yaml_config.get('learning_rate', 0.0001)
+    batch_size = yaml_config.get('batch_size', 64)
+    model_type = yaml_config.get('model', 'LDM')
+
+    # Model Params
+    use_is = yaml_config.get('use_importance_sampling', True)
+    latent_ch = yaml_config.get('latent_channels', 4)
+    img_size = yaml_config.get('image_size', 128)
+    vae_scale = yaml_config.get('vae_scale_factor', 0.18215)
+    vae_factor = yaml_config.get('vae_factor', 8)
+    val_split = yaml_config.get('validation_split_ratio', 0.2)
+    feats = yaml_config.get('features', [128, 256, 512])
+    attn = yaml_config.get('self_attention', True)
+    workers = yaml_config.get('num_workers', 0)
+
+    
+    latent_h = img_size // vae_factor
+    latent_w = img_size // vae_factor
+
+    # Create the Shape Tuple (B, C, H, W)
+    current_shape = (batch_size, latent_ch, latent_h, latent_w)
+    
+    cfg = {
+        'ForwardConfig': {
+            # Operational parameters (hardcoded for training logic)
+            't': t_forward,
+            'final': final,
+            'eps': eps,
+            'closed_formula': closed_formula,
+            'seed': seed,
+            
+            # SDE Parameters from YAML
+            'beta_min': beta_min,
+            'beta_max': beta_max,
+            'N': N_timesteps,
+            'schedule': schedule,
+            
+            # Model/Data Parameters from YAML
+            'use_importance_sampling': use_is,
+            'latent_channels': latent_ch,
+            'image_size': img_size,
+            'vae_scale_factor': vae_scale,
+            'validation_split_ratio': val_split,
+            'features': feats,
+            'self_attention': attn,
+            'num_workers': workers,
+            'data_path': args.data_path, # Overwrite YAML path with CLI arg
+            
+            # Training Meta
+            'epochs': epochs,
+            'learning_rate': lr,
+            'batch_size': batch_size,
+            'model': model_type
+        },
+        'ReverseConfig': {
+            # Operational parameters
+            'output_path': "reverse.pt",
+            'scores': "scores.pt",
+            't0': t_0,
+            't1': t_1,
+            'device': None,
+            'dtype': None,
+            'shape': current_shape,
+            'seed': seed,
+            'corrector': corrector,
+            'n_corr': n_corr,
+            'target_snr': target_snr,
+            'rev_type': rev_type,
+
+            # Shared Parameters from YAML
+            'beta_min': beta_min,
+            'beta_max': beta_max,
+            'N': N_timesteps,
+            'schedule': schedule,
+            'use_importance_sampling': use_is,
+            'latent_channels': latent_ch,
+            'image_size': img_size,
+            'vae_scale_factor': vae_scale,
+            'validation_split_ratio': val_split,
+            'features': feats,
+            'self_attention': attn,
+            'num_workers': workers,
+            'data_path': args.data_path, # Overwrite YAML path with CLI arg
+            
+            # Meta
+            'epochs': epochs,
+            'learning_rate': lr,
+            'batch_size': batch_size,
+            'model': model_type
+        },
+        'LikelihoodConfig': {
+            # Operational parameters
+            'output_path': "reverse.pt",
+            'scores': "scores.pt",
+            't0': t_0,
+            't1': t_1,
+            'device': None,
+            'dtype': None,
+
+            # Shared Parameters from YAML
+            'beta_min': beta_min,
+            'beta_max': beta_max,
+            'N': N_timesteps,
+            'schedule': schedule,
+            'use_importance_sampling': use_is,
+            'latent_channels': latent_ch,
+            'image_size': img_size,
+            'vae_scale_factor': vae_scale,
+            'validation_split_ratio': val_split,
+            'features': feats,
+            'self_attention': attn,
+            'num_workers': workers,
+            'data_path': args.data_path, # Overwrite YAML path with CLI arg
+            
+            # Meta
+            'epochs': epochs,
+            'learning_rate': lr,
+            'batch_size': batch_size,
+            'model': model_type
+        }
+    }
+    
     # 3. Device Setup
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

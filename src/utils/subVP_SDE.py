@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from typing import Callable, Tuple
 import torch.nn as nn
+import math
  
 class subVP_SDE:
     def __init__(self, beta_min: float =0.1, beta_max: float =20, N: int =1000, schedule: str ="linear"):
@@ -52,8 +53,8 @@ class subVP_SDE:
     def get_g_squared(self, t: torch.Tensor) -> torch.Tensor:
         """
         Computes the coefficient g(t)**2 which is specifically for subVP SDE
-        λ(t) is used in the SDE definition as the diffusion coefficient squared.
-        λ(t) = g(t)^2
+        g(t) is used in the SDE definition as the diffusion coefficient squared.
+        g(t)^2 = β(t)[1 - exp(-2∫_0^t β(s)ds)]
         """
         beta_t = self.beta(t)
         B_t = self.B(t)
@@ -62,14 +63,14 @@ class subVP_SDE:
         
         return g_squared
 
-    #Compute the DDPM-style weight
+    # Compute the DDPM-style weight
     def get_alpha_original(self, t: torch.Tensor) -> torch.Tensor:
         """
-        Computes alpha(t) = (exp(-∫_0^t β(s) ds))
+        Computes alpha(t) = 1 - (exp(-∫_0^t β(s) ds))
         """
         B_t = self.B(t)
-        alpha_t = torch.exp(-0.5 * B_t)
-        return alpha_t# changed from squared
+        alpha_t = 1 - torch.exp(-B_t)
+        return alpha_t # changed from squared
             
     # Instanteneous SDE coefficients
     def subVP_sde(self, x, t):
@@ -82,12 +83,12 @@ class subVP_SDE:
         Details:
         beta(t) = beta_0 + t * (beta_1 - beta_0)
         B_t = ∫_0^t beta(s) ds
-        discount for subVP SDE := 1 - exp(-2 * ∫_0^t beta(s) ds) = 1 - exp(-2 * beta_0 * t - (beta_1 - beta_0) * t^2)
+        discount for subVP SDE := 1 - exp(-2 * ∫_0^t beta(s) ds)
         g(t) = sqrt(beta(t) * discount)
         """
         beta_t = self.beta(t)
         drift = -0.5 * beta_t[:, None, None, None] * x
-        diffusion = self.get_g_squared(t)
+        diffusion = torch.sqrt(self.get_g_squared(t))
         
         return drift, diffusion
 
@@ -133,7 +134,7 @@ class subVP_SDE:
         return x_t, noise, std
 
     #Forward Euler - Maruyama simulation
-    def perturb_simulate_path(self, x_0: torch.Tensor, t_end: float = 0.5, steps: int = 500, seed: int = 42, eps: float = 1e-12):
+    def perturb_simulate_path(self, x_0: torch.Tensor, t_end: float = 1.0, steps: int = 500, seed: int = 42, eps: float = 1e-12):
         """Sample X_t by perturbing X_0 with gaussian noise at time t
 
         Operation:
@@ -142,7 +143,7 @@ class subVP_SDE:
         3. Calculating the implied eps
 
          Notes:
-          - Deterministic for fixed x_0, t, and noise.
+          - With fixed x_0, t, and noise.
           - Suitable for training score/ε-predictor networks with known std.
           
         Args:
@@ -162,13 +163,13 @@ class subVP_SDE:
             t_k = t_grid[k].expand(cnt)
             dt = (t_grid[k+1] - t_grid[k]).item() # we return a scalar value
             drift, diffusion = self.subVP_sde(x, t_k)
-            diffusion = torch.sqrt(diffusion)
+            # diffusion = torch.sqrt(diffusion)
             noise = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=gen) # we generate Gaussian Noise, with same device and dtype as x
-            x = x + drift * dt + diffusion[:, None, None, None] * (dt ** 0.5) * noise
+            x = x + drift * dt + diffusion[:, None, None, None] * (dt ** 0.5) * noise #sqrt(dt) is needed because it works as stabilizing term for the variance
         
         t_tensor = torch.full((cnt,), float(t_end), device = device, dtype = dtype)
         mean_t, std_t = self.marginal_prob_subvp(x_0, t_tensor)
-        eps_implied = (x - mean_t) / (std_t[:, None, None, None] +1e-12) #noise tensor
+        eps_implied = (x - mean_t) / (std_t[:, None, None, None] + 1e-12) #noise tensor
         return x, eps_implied, std_t
 
     # score target for likelihood-weighted DSM
@@ -176,14 +177,21 @@ class subVP_SDE:
     # reverse SDE for Euler-Maruyama
     def reverse_euler_step(self, x: torch.Tensor, t: torch.Tensor, dt: float, scores: torch.Tensor, gen: torch.Generator = None) -> torch.Tensor:
         """
-        dx = [ -1/2 β(t) x  - g(t)^2 sθ(x,t) ] dt + g(t) dW̄
+        Euler - Marayuama method:
+        
+        dx = [ -1/2 β(t) x - g(t)^2 sθ(x,t) ] dt + g(t)sqrt(|dt|)z
+        where z ~ N(0, I)
+
+        Update:
+        x <- x + dx
+        t <- t + dt
         """
         beta_t = self.beta(t)
         g2 = self.get_g_squared(t)
         drift = (-0.5 * beta_t[:, None, None, None] * x) - (g2[:, None, None, None] * scores)
         noise = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=gen)
-        x = x + drift * dt + torch.sqrt(g2  * abs(dt))[:, None, None, None] * noise
-        return x
+        x_ret = x + drift * dt + torch.sqrt(g2  * abs(dt))[:, None, None, None] * noise
+        return x_ret
 
     def probability_flow_euler_step(self, x: torch.Tensor, t: torch.Tensor, dt: float, scores: torch.Tensor):
         """
@@ -194,20 +202,35 @@ class subVP_SDE:
         beta_t = self.beta(t)
         g2 = self.get_g_squared(t)
         drift = (-0.5 * beta_t[:, None, None, None] * x) - (0.5 * g2[:, None, None, None] * scores)
-        x = x + drift * dt
-        return x
+        x_ret = x + drift * dt
+        return x_ret
         
     @torch.no_grad()
-    def corrector_langevin(self, x: torch.Tensor, t: torch.Tensor, scores: torch.Tensor, n_steps: int = 1, target_snr: float = 0.16, gen: torch.Generator = None):
+    def corrector_langevin(self, x: torch.Tensor, t: torch.Tensor, scores: torch.Tensor, n_steps: int = 50, target_snr: float = 0.16, gen: torch.Generator = None, model: torch.nn.Module = None):
         """
+        Corrector-Langevin
         x ← x + α s(x,t) + sqrt(2α) z, with α set to reach target SNR per batch.
+
+        Details:
+        Repeat for n_steps
+            1. sample noise: z ~ N(0, I)
+            2. compute norms ||\nabla log p|| and ||z||
+            3. adapt the step size: α = 2(target_snr * ||z||/||\nabla log p||)^2
+            4. update x value: x ← x + α s(x,t) + sqrt(2α) z
         """
         for _ in range(n_steps):
+            
+            if i > 0:
+                _, std_t = sde.marginal_prob_subvp(x, t)
+                eps_pred = model(x, t)
+                scores = - eps_pred / (std_t[:, None, None, None] + 1e-12)
+                
             noise = torch.randn(x.shape, device = x.device, dtype = x.dtype, generator = gen)
             # per-sample adaptive step size
             grad_norm = scores.flatten(1).norm(dim=1).clamp_min(1e-12)
             noise_norm = noise.flatten(1).norm(dim=1).clamp_min(1e-12)
             step_size = (target_snr * noise_norm / grad_norm) ** 2 *2.0
+            # new x
             x = x + step_size[:, None, None, None] * scores + torch.sqrt(2.0 * step_size)[:, None, None, None] * noise
         
         return x
@@ -230,7 +253,6 @@ class subVP_SDE:
         #3. changing shape like (B,1,1,1) from (-1, previous_list)
         #4. we reshape the tensor with .view()
         g2 = self.get_g_squared(t).view(-1, *([1] * (x.ndim -1)))
-        scores = model(x, t)
         return -0.5 * beta_t * x - 0.5 *g2 * scores
 
     def standard_normal_logprob(self, x: torch.Tensor):
@@ -258,43 +280,36 @@ class subVP_SDE:
         - then we can write ⟨(J^Te), e⟩ = e^TJe, which givs us an unbiased estimate of the trace of J
         """
         x_req = x.detach().requires_grad_(True)
-        v_req = self.v_field(x, t, scores.detach())
-
-        if estimator == "gaussian":
-            e = torch.randn_like(x)
-        elif estimator == "rademacher":
-            e = (torch.randint_like(x_req, low=0, high=2, dtype=torch.int64).float() * 2.0 - 1.0)
+        
+        # Sample noise
+        if estimator == "rademacher":
+             e = (torch.randint_like(x_req, low=0, high=2).float() * 2.0 - 1.0)
+        elif estimator == "gaussian":
+             e = torch.randn_like(x_req)
         else:
             raise ValueError
-
-        # Vector-Jacobian Product
-        dot  = (v_req * e).sum()
-        jte = torch.autograd.grad(dot, x_req, create_graph = True)[0]
-        div_s = (jte * e).flatten(1).sum(dim=1) 
-        return div_s
-
-    def likelihood_euler_step(self, x: torch.Tensor, t: torch.Tensor, model: nn.Module, estimator = "rademacher"):
-        """
-        One Euler step payload for likelihood ODE integration.
-        Returns:
-          v(x,t): PF-ODE drift
-          div_v:  Hutchinson trace estimate of div v(x,t)
-        Assumes model predicts eps; converts to score with std_t from subVP marginal.
-        """
-        _, std_t = self.marginal_prob_subvp(x, t)
-        eps_pred = model(x, t)
-        scores = eps_pred / (std_t[:, None, None, None] + 1e-20)
-        #scores = - eps_pred / (std_t[:, None, None, None] + 1e-20)
-
-        # PF-ODE drigt
-        v = self.v_field(x, t, model)
-        # v = self.v_field(x, t, scores)
-
-        # beta_t = self.beta(t)
-        # g2 = self.get_g_squared(t)
-        div_v = self.hutchinson_div_score(x, t, scores, estimator) # per batch divergence
         
-        # computing the divergnce(v)
-        # div_v = -0.5 * beta_t * d - 0.5 * g2 * div_s
+        # Compute v(x) *inside* the graph
+        _, std_t = self.marginal_prob_subvp(x_req, t)
+        eps_pred = model(x_req, t)
+        scores = - eps_pred / (std_t[:, None, None, None] + 1e-20)
+        
+        v_out = self.v_field(x_req, t, scores)
+
+        # Vector-Jacobian Product (VJP)
+        grad_v_e = torch.autograd.grad(
+            outputs=(v_out * e).sum(), 
+            inputs=x_req, 
+            create_graph=False # We do not compute second order derivatives
+        )[0]
+        
+        # Trace Estimate: e^T * (J^T * e) = e^T * grad_v_e
+        div_v = (grad_v_e * e).flatten(1).sum(dim=1)
+        
+        return v_out.detach(), div_v
+
+    def likelihood_euler_step(self, x, t, model, estimator):
+        # Calculate v and div_v together
+        v, div_v = self.hutchinson_div_v(x, t, model, estimator)
         
         return v, div_v
