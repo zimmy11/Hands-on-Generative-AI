@@ -189,8 +189,8 @@ class subVP_SDE:
         g2 = self.get_g_squared(t)
         drift = (-0.5 * beta_t[:, None, None, None] * x) - (g2[:, None, None, None] * scores)
         noise = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=gen)
-        x = x + drift * dt + torch.sqrt(g2  * abs(dt))[:, None, None, None] * noise
-        return x
+        x_ret = x + drift * dt + torch.sqrt(g2  * abs(dt))[:, None, None, None] * noise
+        return x_ret
 
     def probability_flow_euler_step(self, x: torch.Tensor, t: torch.Tensor, dt: float, scores: torch.Tensor):
         """
@@ -201,8 +201,8 @@ class subVP_SDE:
         beta_t = self.beta(t)
         g2 = self.get_g_squared(t)
         drift = (-0.5 * beta_t[:, None, None, None] * x) - (0.5 * g2[:, None, None, None] * scores)
-        x = x + drift * dt
-        return x
+        x_ret = x + drift * dt
+        return x_ret
         
     @torch.no_grad()
     def corrector_langevin(self, x: torch.Tensor, t: torch.Tensor, scores: torch.Tensor, n_steps: int = 50, target_snr: float = 0.16, gen: torch.Generator = None, model: torch.nn.Module = None):

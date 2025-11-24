@@ -1,20 +1,40 @@
 # /configs/config.yaml
 
+# --- STOCHASTIC PROCESSES PARAMETERS
+beta_min: 0.1         # Beta schedule minimum (beta_0)
+beta_max: 20.0        # Beta schedule maximum (beta_1)
+n_timesteps: 1000      # N value for the diffusion schedule (T=1.0)
+schedule: 'linear'
+seed: 42
+
+# --- FORWARD PROCESS PARAMETERS
+t_forward: 1.0
+final: True
+eps: 1e-5
+closed_formula: True
+
+# --- REVERSE PROCESS PARAMETERS
+t_0: 1.0
+t_1: 0.0
+corrector: False
+n_corr: 50
+target_snr: 0.16
+rev_type: 'sde'
+
+
 # --- TRAINING HYPERPARAMETERS (Phase 2: Unconditional LDM) ---
 epochs: 50
 learning_rate: 0.0001
 batch_size: 64
 model: 'LDM'  # Model type: 'ldm' for Latent Diffusion Model
 # --- SDE/DIFFUSION SCHEDULE PARAMETERS (subVP SDE) ---
-n_timesteps: 1000      # N value for the diffusion schedule (T=1.0)
-beta_min: 0.1         # Beta schedule minimum (beta_0)
-beta_max: 20.0        # Beta schedule maximum (beta_1)
 use_importance_sampling: True # Set to True to use g(t)^2 / lambda_orig(t) sampling
 
 # MODEL PARAMETERS ---
 latent_channels: 4          # LATENT_CHANNELS
 image_size: 128             # IMAGE_SIZE (Input pixel size)
 vae_scale_factor: 0.18215   # VAE_SCALE_FACTOR
+vae_factor: 8
 validation_split_ratio: 0.2 # VALIDATION_SPLIT_RATIO
 features: [128, 256, 512]  # FEATURES (U-Net channel progression)
 self_attention: True     # SELF_ATTENTION (Enable self-attention layers)
