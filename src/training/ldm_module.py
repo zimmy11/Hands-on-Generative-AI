@@ -54,6 +54,12 @@ class LDMLightningModule(pl.LightningModule):
             # Importance Sampling (using the pre-calculated tensor)
             indices = torch.multinomial(is_probabilities, num_samples=batch_size, replacement=True)
             t = (indices.float() / self.n_timesteps).to(device)
+            # p_t = is_probabilities[indices].to(device)
+            
+            # # Importance Sampling Weight: 1 / (N * p(t))
+            # # Dobbiamo dividere per la probabilità di aver scelto questo t per rendere la stima unbiased
+            # importance_weight = 1.0 / (p_t * self.n_timesteps + 1e-10)
+            # importance_weight = importance_weight[:, None, None, None]
         else: 
             # Uniform Sampling (Fallback/Plain Likelihood Weighting)
             t = torch.rand(batch_size, device=device)
@@ -72,9 +78,12 @@ class LDMLightningModule(pl.LightningModule):
         
         # Reshape for broadcasting (B, 1, 1, 1)
         weighting_factor = g_squared_tensor[:, None, None, None] 
-        
+
+        #var_t = std**2
+        #weighting_factor = (g_squared_tensor / (std + 1e-8))[:, None, None, None]      
+        #   
         # Total Weighted Loss (L(t) * g(t)^2)
-        weighted_loss = per_sample_loss * weighting_factor
+        weighted_loss = per_sample_loss * weighting_factor # * importance_weight
         
         # Final batch loss (torch.mean over the batch)
         final_loss = torch.mean(weighted_loss)

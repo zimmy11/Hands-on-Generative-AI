@@ -284,10 +284,12 @@ class subVP_SDE:
         _, std_t = self.marginal_prob_subvp(x, t)
         eps_pred = model(x, t)
         scores = eps_pred / (std_t[:, None, None, None] + 1e-20)
+        #scores = - eps_pred / (std_t[:, None, None, None] + 1e-20)
 
         # PF-ODE drigt
         v = self.v_field(x, t, model)
-        
+        # v = self.v_field(x, t, scores)
+
         # beta_t = self.beta(t)
         # g2 = self.get_g_squared(t)
         div_v = self.hutchinson_div_score(x, t, scores, estimator) # per batch divergence

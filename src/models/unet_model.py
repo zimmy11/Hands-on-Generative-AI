@@ -31,6 +31,14 @@ class ResBlock(nn.Module):
             self.attention = nn.MultiheadAttention(embed_dim=channels, num_heads=4)
             self.norm_attn = nn.LayerNorm(channels) # LayerNorm normalizes over the last dimension (C)
             self.norm_res = nn.LayerNorm(channels)
+        
+
+        nn.init.zeros_(self.time_proj1.weight)
+        nn.init.zeros_(self.time_proj1.bias)
+        nn.init.zeros_(self.time_proj2.weight)
+        nn.init.zeros_(self.time_proj2.bias)
+
+        
 
     def forward(self, x, t_emb):
         identity = x
@@ -60,8 +68,9 @@ class ResBlock(nn.Module):
         
         if hasattr(self, "attention"):
             b, c, h, w = out.size()
+
             attention_residual = out
-            # (b, h*w, c) only for the Layer Norm
+            # (b, h*w, c) only for the Layer Norm 
             out_reshaped = out.view(b, c, h * w).permute(0, 2, 1)  
             # Apply LayerNorm
             # (h*w, b, c) for the attention function
@@ -69,13 +78,13 @@ class ResBlock(nn.Module):
             out_attended, _ = self.attention(out_norm, out_norm, out_norm)
 
             # (b, h*w, c) for the residual connection
-            out_attended = out_attended.permute(1, 0, 2) + out_reshaped
+            out_attended = out_attended.permute(1, 0, 2) #+ out_reshaped  POSSIBLE MISTAKE!!
             out_attended = self.norm_res(out_attended)
             out = out_attended.permute(0, 2, 1).view(b, c, h, w)
             out += attention_residual
 
         out += identity # Residual connection
-        out = self.act(out)
+        #out = self.act(out) POSSIBLE MISTAKE
         return out
 
 

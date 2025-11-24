@@ -89,22 +89,14 @@ def setup(cfg: ForwardConfig, data_path: str, device: torch.device):
         'data_path': data_path
     }
 
-    patience = cfg.early_stopping_patience or 10
 
-    early_stopping = EarlyStopping(
-        monitor='val_loss',
-        patience=patience,
-        verbose=True,
-        mode='min'
-    )
 
     # E. Instantiate Lightning Module
     ldm_module = LDMLightningModule(
         unet_model=unet_model, 
         forward_process=forward_process, 
         vae_encoder=vae_encoder_func, 
-        hparams=hparams,
-        callbacks =[early_stopping] 
+        hparams=hparams
     )
     
     return ldm_module, train_loader, val_loader
@@ -141,15 +133,16 @@ def main():
 
 
     # 5. W&B Initialization (Key is read automatically from WANDB_API_KEY environment variable on GCP)
-    wandb.init(
-        project = "LDM Training",
-        #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
-        config=cfg,
-        name = f"{model_name}_{hyper_suffix}",
-        reinit=True
-    )
+    # wandb.init(
+    #     project = "LDM Training",
+    #     #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
+    #     config=cfg,
+    #     name = f"{model_name}_{hyper_suffix}",
+    #     reinit=True
+    # )
     # The WandbLogger integrates logging with the PL Trainer
     wandb_logger = WandbLogger(project = "LDM Training",
+        name=f"{model_name}_{hyper_suffix}", config=cfg,       
         #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
         log_model="all")
 
@@ -169,6 +162,16 @@ def main():
         save_last=True
     )
 
+
+    patience = cfg.early_stopping_patience or 10
+
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=patience,
+        verbose=True,
+        mode='min'
+    )
+
     # 7. Initialize Trainer (Optimized for T4/GCP Cost Saving)
     trainer = Trainer(
         logger=wandb_logger,
@@ -176,8 +179,8 @@ def main():
         #accelerator="gpu",
         devices=1,                      # Use 1 T4 GPU
         max_epochs=cfg.epochs,
-        precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
-        callbacks=[checkpoint_callback],
+        precision=16,           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
+        callbacks=[checkpoint_callback, early_stopping],
         limit_train_batches=0.5, limit_val_batches=0.5 # --> we use it to test the code quickly
         # Example for quick debug run: limit_train_batches=0.1, limit_val_batches=0.1
     )

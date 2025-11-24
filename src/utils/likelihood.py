@@ -4,11 +4,11 @@ from Configurations import ForwardConfig
 
 # if we want to integrate it properly we should add reduce in cfg and number of grid steps
 class Likelihood:
-    def __init__(self, sde: subVP_sde, cfg: ForwardConfig):
+    def __init__(self, sde: subVP_SDE, cfg: ForwardConfig):
         self.sde = sde
         self.cfg = cfg
     
-    def alpha_squared(self, t: torch.Tensor):
+    def alpha_squared(self, sde: subVP_SDE,  t: torch.Tensor):
         """
         Compute the square of the alpha original, which is the mean coefficient of the subVP SDE process
         """
