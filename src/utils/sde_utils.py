@@ -17,7 +17,7 @@ def calculate_importance_sampling_probabilities(sde_model, N_timesteps, device):
     
     # 2. Calcola i pesi necessari (g(t)^2 e λ_orig(t))
     g_squared = sde_model.get_g_squared(timesteps)
-    alpha_original = sde_model.get_alpha_original(timesteps)
+    alpha_original = sde_model.get_alpha_original(timesteps) ** 2
     
     # 3. Calcola il peso non normalizzato p(t) ∝ g(t)^2 / λ_orig(t)
     # add epsilon to avoid 0 division

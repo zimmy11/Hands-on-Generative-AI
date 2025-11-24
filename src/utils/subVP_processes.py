@@ -78,6 +78,21 @@ class DiffusionProcesses:
         return z_t, epsilon, std, sde
     
     def sample_reverse(self, cfg: ReverseConfig, model: nn.Module):
+        """
+        We are implementing the sampling through reversing the SDE.
+
+        Args:
+        - cfg: define the configuration parameters of the reverse process
+        - x are sampled form N(0, I), since the forward process brought us to the prior π(x)
+        - dt: is a negative timestep T -> 0, where t0 = 1 (starting time) and t1 = 0 (ending time)
+
+        Formulation:
+        At every moment p_0t(x_t|x_0) = N(x_t; μ, σ^2I):
+        1. log p(x_t) ∝ ||x_t -μ||^2/2σ^2_t
+        2. \nabla log p(x_t) = - (x_t -μ)/σ^2_t
+        3. Since: x_t = μ + σ_t eps -> x_t -μ = σ_t eps
+        4. \nabla log p(x_t) = - eps / σ_t
+        """
         device = next(model.parameters()).device
         dtype = torch.float32
 
@@ -95,6 +110,7 @@ class DiffusionProcesses:
         start_time_fixed = time.time()
         start_time = time.time()
         n_steps = cfg.N//10
+        
         #Reverse process loop
         with torch.no_grad():
             for k in range(cfg.steps):
@@ -104,9 +120,11 @@ class DiffusionProcesses:
                 t_k = t_grid[k].expand(cfg.shape[0])
                 t_k1 = t_grid[k+1].expand(cfg.shape[0])
                 dt = (t_k1[0] - t_k[0])
-    
+
+                # Extracting current standard deviation
                 _, std_t = sde.marginal_prob_subvp(x, t_k)
 
+                # Converting eps_pred (noise) into scores \nabla_x log p_t(x)
                 eps_pred = model(x, t_k)
                 scores = - eps_pred / (std_t[:, None, None, None] + 1e-12)
                 
@@ -115,15 +133,21 @@ class DiffusionProcesses:
                     x = sde.reverse_euler_step(x, t_k, dt, scores, gen = gen)
                 elif cfg.rev_type == "ode":
                     x = sde.probability_flow_euler_step(x, t_k, dt, scores, gen = gen)
+                
                 #Corrector
-                # x = sde.corrector_langevin(x, t_k1, scores, n_steps = cfg.n_corr, target_snr = cfg.target_snr, gen = gen)
+                if cfg.corrector == True:
+                    x = sde.corrector_langevin(x, t_k1, scores, n_steps = cfg.n_corr, target_snr = cfg.target_snr, gen = gen, model = model)
             
         return x
 
         
-    def run_reverse(self, model:nn.Module):
-        cfg = ReverseConfig()
-        return self.sample_reverse(cfg, model)
+    def run_reverse(self, model:nn.Module, likelihood: bool = False):
+        if not likelihood:
+            cfg = ReverseConfig()
+            return self.sample_reverse(cfg, model)
+        else:
+            lcfg = LikelihoodConfig()
+            return self.log.likelihood_subvp_ode(
 
 
     def loglikelihood_subvp_ode(x0: torch.Tensor, model: nn.Module, lcfg: LikelihoodConfig):
@@ -132,9 +156,11 @@ class DiffusionProcesses:
         d logpt(x_t)/dt = −∇⋅v(x_t,t)
         Therefore:
         log p_0(x_0) = log p_T(x_T) + ∫_0^T ∇⋅v(x_t,t)dt
+
+        We need x_0 because we are asking how likely is to get this specific image
         """
         device = lcfg.device
-        x0 = x0.detach().to(device).clone()
+        x = x0.to(device).clone()
         B_size = x0.size(0)
 
         #Accumulate the intgral of divergence(v)
