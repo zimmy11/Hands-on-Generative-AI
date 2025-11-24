@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from src.utils.subVP_SDE import subVP_SDE
+from src.utils.subVP_processes import DiffusionProcesses
 
 class DenoisingScoreMatchingLoss(nn.Module):
     def __init__(self, sde: subVP_sde, N_timesteps: int = 500, epsilon: float = 1e-5):
@@ -17,6 +18,7 @@ class DenoisingScoreMatchingLoss(nn.Module):
         self.N_timesteps = N_timesteps
         self.probabilities = None
         self.time_grid = None
+        self.diffusion_processes = DiffusionProcesses(beta_min = self.sde.beta_0, beta_max = self.sde.beta_1, N = self.sde.N)
 
     def calculate_importance_sampling_probabilities(self, device):
         """
@@ -40,7 +42,7 @@ class DenoisingScoreMatchingLoss(nn.Module):
         self.probabilities = sampling_weights / torch.sum(sampling_weights)
 
 
-    def forward_passage(self, model: nn.Module, x0: torch.Tensor) -> torch.Tensor:
+    def forward_passage(self, model: nn.Module, x0: torch.Tensor, importance_sampling: bool = True) -> torch.Tensor:
         """
         Computes the weighted score matching loss.
         
@@ -56,12 +58,15 @@ class DenoisingScoreMatchingLoss(nn.Module):
         batch_size = x0.shape[0]
         device = x0.device
 
-        if self.probabilities is None and self.time_grid is None:
-            self.calculate_importance_sampling_probabilities(device)
+        if importance_sampling:
+            if self.probabilities is None and self.time_grid is None:
+                self.calculate_importance_sampling_probabilities(device)
 
-        # Sampling the times
-        t_indices = torch.multinomial(self.probabilities, num_samples=batch_size, replacement=True)
-        t = self.time_grid[t_indices]
+            # Sampling the times
+            t_indices = torch.multinomial(self.probabilities, num_samples=batch_size, replacement=True)
+            t = self.time_grid[t_indices]
+        else:
+            t = self.randn(barch_size, device = device)
         
         # Utilizes the closed-form transition kernel defined in subVP_SDE.py
         x_t, z, std = self.sde.perturb_closed(x0, t)
