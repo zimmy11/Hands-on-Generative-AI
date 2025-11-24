@@ -14,7 +14,7 @@ from src.utils.sde_utils import *
 # from .unet import UNet
 
 class LDMLightningModule(pl.LightningModule):
-    def __init__(self, unet_model, forward_process, vae_encoder, hparams):
+    def __init__(self, unet_model, forward_process, vae_encoder, hparams, cfg):
         super().__init__()
         
         # Save Hyperparameters to W&B/Logger
@@ -32,6 +32,8 @@ class LDMLightningModule(pl.LightningModule):
         self.lr = hparams['learning_rate']
         self.vae_scale_factor = hparams['vae_scale_factor']
         self.n_timesteps = hparams['n_timesteps'] # N for IS calculation
+        self.cfg = cfg 
+
 
     def forward(self, x_t, t):
         """U-Net prediction of epsilon."""
@@ -65,7 +67,7 @@ class LDMLightningModule(pl.LightningModule):
             t = torch.rand(batch_size, device=device)
 
         # Call the corrected method (z0, t, noise)
-        x_t, epsilon_true, std, sde  = self.forward_process.run_forward(x_start_latents, without_likelihood = True)
+        x_t, epsilon_true, std, sde  = self.forward_process.run_forward(x_start_latents, without_likelihood = True, configurations = self.cfg)
 
         # 4. Network prediction (epsilon_pred)
         epsilon_pred = self(x_t, t)

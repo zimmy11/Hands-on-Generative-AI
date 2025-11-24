@@ -9,7 +9,7 @@ import time
 
 class DiffusionProcesses:
     def __init__(self, configurations: dict):
-        cfg = configurations['Forward']
+        cfg = configurations['ForwardConfig']
         self.beta_min = cfg['beta_min']
         self.beta_max = cfg['beta_max']
         self.N = cfg['N']
@@ -36,7 +36,7 @@ class DiffusionProcesses:
         - Deterministic given z0, t, and a fixed epsilon.
         - Useful for reproducible corruption by reusing returned epsilon.
         """
-        cfg = configurations['Forward']
+        cfg = configurations['ForwardConfig']
         
         if cfg['final']:
             t_val = 1.0 - float(cfg['eps'])
@@ -46,7 +46,7 @@ class DiffusionProcesses:
         # Building the SDE on the same device of the latent vector
         sde = subVP_SDE(beta_min=cfg['beta_min'], beta_max=cfg['beta_max'], N=cfg['N'])
 
-        if cfg.closed_formula:
+        if cfg['closed_formula']:
             t_tensor = torch.full((z0.size(0),), t_val, device=z0.device, dtype=z0.dtype)
             z_t, epsilon, std = sde.perturb_closed(z0, t_tensor)
         else:
@@ -104,7 +104,7 @@ class DiffusionProcesses:
         
         start_time_fixed = time.time()
         start_time = time.time()
-        n_steps = cfg.N//10
+        n_steps = cfg['N']//10
         
         #Reverse process loop
         with torch.no_grad():
@@ -166,7 +166,7 @@ class DiffusionProcesses:
         
         ode = subVP_SDE(beta_min=lcfg['beta_min'], beta_max=lcfg['beta_max'], N=lcfg['N'])
         
-        for k in range(lcfg.steps):
+        for k in range(lcfg['steps']):
             t = t_grid[k].expand(B_size)
             dt = (t_grid[k+1] - t_grid[k]).item()
 
