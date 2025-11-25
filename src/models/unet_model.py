@@ -5,86 +5,83 @@ from .components import SinusoidalPositionEmbeddings
 
 # Residual Block
 class ResBlock(nn.Module):
-    """
-    A simple Residual Block with two convolutional layers.
-    """
+    def __init__(self, in_channels, out_channels = None, time_embed_dim=128, num_groups=32, self_attention=False, dropout=0.1):
+        super().__init__()
 
-    def __init__(self, channels, time_embed_dim = 128, num_groups=8, self_attention=False):
-        super(ResBlock, self).__init__()
-
-        # Time Embedding
-        self.time_proj1 = nn.Linear(time_embed_dim, channels * 2)
-        self.time_proj2 = nn.Linear(time_embed_dim, channels * 2)
-
-        # Input Number of channels (128, 256, 512) x h (16, 32) x w (16, 32)
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-        self.norm1 = nn.GroupNorm(num_groups=num_groups, num_channels=channels)
-        self.act = nn.SiLU(inplace=True)
-
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-        self.norm2 = nn.GroupNorm(num_groups = num_groups, num_channels = channels)
+        self.out_channels = out_channels if out_channels else in_channels
+        # --- Normalization + Conv Block 1 ---
+        # Use GroupNorm (LDM standard: 32 groups)
+        self.norm1 = nn.GroupNorm(num_groups, in_channels)
+        self.conv1 = nn.Conv2d(in_channels, self.out_channels, kernel_size=3, padding=1)
         
-        # Output channels = Input channels 
+        # --- Normalization + Conv Block 2 ---
+        self.norm2 = nn.GroupNorm(num_groups, self.out_channels)
+        self.conv2 = nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, padding=1)
+        
+        # Activation and dropout
+        self.act = nn.SiLU()
+        self.dropout = nn.Dropout(dropout)
 
-        # Self-attention layer (optional)
+        # --- Time Embedding Projection ---
+        # Projects the time embedding into scale & shift vectors for FiLM modulation
+        self.time_proj = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(time_embed_dim, self.out_channels * 2)
+        )
+
+        if in_channels != self.out_channels:
+            self.shortcut = nn.Conv2d(in_channels, self.out_channels, kernel_size=1)
+        else:
+            self.shortcut = nn.Identity()
+
+            
+        # --- Attention (optional) ---
+        self.use_attention = self_attention
         if self_attention:
-            self.attention = nn.MultiheadAttention(embed_dim=channels, num_heads=4)
-            self.norm_attn = nn.LayerNorm(channels) # LayerNorm normalizes over the last dimension (C)
-            self.norm_res = nn.LayerNorm(channels)
-        
+            self.norm_attn = nn.GroupNorm(num_groups, self.out_channels)
+            self.attn = nn.MultiheadAttention(self.out_channels, num_heads=4, batch_first=True)
 
-        nn.init.zeros_(self.time_proj1.weight)
-        nn.init.zeros_(self.time_proj1.bias)
-        nn.init.zeros_(self.time_proj2.weight)
-        nn.init.zeros_(self.time_proj2.bias)
-
-        
-
+    
     def forward(self, x, t_emb):
-        identity = x
-        # Adaptive Normalization with Time Embedding
-
-        # Time embedding 1 projection 
-        t_proj_1 = self.time_proj1(t_emb).chunk(2, dim=-1)
-        gamma1, beta1 = t_proj_1[0].unsqueeze(-1).unsqueeze(-1), t_proj_1[1].unsqueeze(-1).unsqueeze(-1)
-
-
-
-
-        out = self.conv1(x)
-        # GroupNorm + AdaGN (FiLM modulation)
-        out = self.norm1(out) * (1 + gamma1) + beta1
-        out = self.act(out)
-
-        # Time embedding 2 projection 
-        t_proj_2 = self.time_proj2(t_emb).chunk(2, dim=-1)
-        gamma2, beta2 = t_proj_2[0].unsqueeze(-1).unsqueeze(-1), t_proj_2[1].unsqueeze(-1).unsqueeze(-1)
-
-        out = self.conv2(out)
-        out = self.norm2(out) * (1 + gamma2) + beta2
-        #out = self.act(out)
-
-     
+        h = x
         
-        if hasattr(self, "attention"):
-            b, c, h, w = out.size()
+        # --- Block 1: Pre-Normalization + Conv ---
+        h = self.norm1(h)
+        h = self.act(h)
+        h = self.conv1(h)
+        
+        # --- Inject Time Embedding via FiLM ---
+        # Compute scale and shift from time embedding
 
-            attention_residual = out
-            # (b, h*w, c) only for the Layer Norm 
-            out_reshaped = out.view(b, c, h * w).permute(0, 2, 1)  
-            # Apply LayerNorm
-            # (h*w, b, c) for the attention function
-            out_norm = self.norm_attn(out_reshaped).permute(1, 0, 2)           
-            out_attended, _ = self.attention(out_norm, out_norm, out_norm)
-
-            # (b, h*w, c) for the residual connection
-            out_attended = out_attended.permute(1, 0, 2) #+ out_reshaped  POSSIBLE MISTAKE!!
-            out_attended = self.norm_res(out_attended)
-            out = out_attended.permute(0, 2, 1).view(b, c, h, w)
-            out += attention_residual
-
-        out += identity # Residual connection
-        #out = self.act(out) POSSIBLE MISTAKE
+        emb = self.time_proj(t_emb)[:, :, None, None]  # [B, 2C, 1, 1]
+        scale, shift = emb.chunk(2, dim=1)
+        
+        # --- Block 2: Pre-Norm + FiLM modulation + Conv ---
+        h = self.norm2(h)
+        h = h * (1 + scale) + shift  # Apply FiLM (Feature-wise Linear Modulation)
+        h = self.act(h)
+        h = self.dropout(h)
+        h = self.conv2(h)
+        
+        # --- Residual connection ---
+        out = h + self.shortcut(x)
+        
+        # --- Optional Self-Attention ---
+        if self.use_attention:
+            residual = out
+            out = self.norm_attn(out)
+            
+            # Reshape [B, C, H, W] -> [B, Seq, C] for MultiheadAttention
+            b, c, h_dim, w_dim = out.shape
+            out = out.view(b, c, h_dim * w_dim).transpose(1, 2)  # [B, Seq, C]
+            
+            # Apply multi-head self-attention
+            out, _ = self.attn(out, out, out)
+            
+            # Reshape back to [B, C, H, W] and add residual
+            out = out.transpose(1, 2).view(b, c, h_dim, w_dim)
+            out = out + residual
+            
         return out
 
 
@@ -95,7 +92,7 @@ class UNet(nn.Module):
     LDM UNet model skeleton.
     """
 
-    def __init__(self, in_channels, out_channels, num_blocks = 2, time_emb_dim = 128, features=[128, 256, 512]):
+    def __init__(self, in_channels = 128, out_channels = 4, num_blocks = 2, time_emb_dim = 128, features=[128, 256, 512]):
         super(UNet, self).__init__()
 
 
@@ -134,7 +131,8 @@ class UNet(nn.Module):
         for next_channels in features[1:]:
             level_blocks = nn.ModuleList()
             for _ in range(num_blocks):
-                block = ResBlock(current_channels, time_embed_dim=time_emb_dim, num_groups = min(current_channels//32, 32))
+                use_attn = (current_channels >= 256)
+                block = ResBlock(current_channels, time_embed_dim=time_emb_dim, num_groups = min(current_channels//32, 32), self_attention=use_attn)
                 level_blocks.append(block)
 
             # Output size halved (DownSampling Layer)
@@ -163,21 +161,27 @@ class UNet(nn.Module):
             in_channels_up = reversed_features[i]
 
             # UpSampling: Reduces channels while doubling spatial size.
-            upsample = nn.ConvTranspose2d(in_channels_up, out_channels_level, kernel_size=4, stride=2, padding=1)
-            self.upsamples.append(upsample)
+            # We use Nearest Neighbor Upsampling
+            upsample = nn.Sequential(
+                nn.Upsample(scale_factor=2, mode='nearest'),
+                nn.Conv2d(in_channels_up, out_channels_level, kernel_size=3, padding=1)
+            )
             
-            # After UpSampling + Skip Connection, the channel count will be N_current * 2
-            block_in_channels_after_skip = out_channels_level * 2
-
+            self.upsamples.append(upsample)
             
             # To solve the channel mismatch after concatenation with skip connections,
             # we introduce an adapter convolutional layer.
-            adapter_conv = nn.Conv2d(block_in_channels_after_skip, out_channels_level, kernel_size=1)
-            level_blocks.append(adapter_conv) # Adapter is the first operation in this decoder level
+            # adapter_conv = nn.Conv2d(block_in_channels_after_skip, out_channels_level, kernel_size=1)
+            # level_blocks.append(adapter_conv) # Adapter is the first operation in this decoder level
 
-            for _ in range(num_blocks):
-
-                block = ResBlock(out_channels_level, time_embed_dim=time_emb_dim, num_groups = min(out_channels_level//32, 32))
+            for j in range(num_blocks):
+                if j == 0:
+                    block_in = out_channels_level * 2
+                else: 
+                    block_in = out_channels_level
+                
+                use_attn = (out_channels_level >= 256)
+                block = ResBlock(in_channels = block_in, out_channels = out_channels_level, time_embed_dim=time_emb_dim, num_groups = min(out_channels_level//32, 32), self_attention=use_attn)
                 level_blocks.append(block)
             
             self.dec_layers.append(level_blocks)
@@ -193,12 +197,16 @@ class UNet(nn.Module):
 
     def forward(self, x, time):
 
+        if time.dtype == torch.float32 and time.max() <= 1.0:
+            time = time * 1000.0
+
         time_sin = self.time_proj(time)         
         t_emb = self.time_mlp(time_sin)
-        x = self.init_conv(x)
 
+
+        x = self.init_conv(x)
         # skip connections
-        skips = []
+        skips = [x]
 
         # encoder
         for blocks, down in zip(self.enc_layers, self.downsamples):
@@ -213,24 +221,22 @@ class UNet(nn.Module):
             x = layer(x, t_emb)
 
         # decoder for skip connections
-        for up, blocks, skip in zip(self.upsamples, self.dec_layers, reversed(skips)):
+        skip_iterator = reversed(skips)
+        for up, blocks in zip(self.upsamples, self.dec_layers):
             x = up(x)
-            # # # if shapes mismatch due to odd sizes, center-crop skip
+            
+            skip = next(skip_iterator)
+            
+            # Interpolazione di sicurezza (raramente serve se le dimensioni sono potenze di 2)
             if x.shape[-2:] != skip.shape[-2:]:
-                    # simple interpolate to match
-                    #_, _, h, w = x.shape
                 x = F.interpolate(x, size=skip.shape[-2:], mode='bilinear', align_corners=False)            
             
+            # Concatenazione
             x = torch.cat([x, skip], dim=1)
+            
+            # Passaggio nei blocchi (ora gestiscono loro i canali)
             for blk in blocks:
-                if isinstance(blk, nn.Conv2d):
-                    # Adapter conv
-                    x = blk(x)
-                else:
-                    x = blk(x, t_emb)
+                x = blk(x, t_emb)
 
-        # final conv
         out = self.out_conv(x)
-
-
         return out

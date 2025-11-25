@@ -5,9 +5,12 @@ import yaml
 import torch
 from torch.utils.data import DataLoader, random_split
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.callbacks import ModelCheckpoint
+from src.utils.DelayedEarlyStopping import DelayedEarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 import wandb
+import re
+from datetime import datetime
 
 # Import all core components from your structured project modules
 from src.models.unet_model import UNet  # Your custom UNet model
@@ -324,19 +327,13 @@ def main():
         hyper_suffix += "_SA"
 
 
-    # 5. W&B Initialization (Key is read automatically from WANDB_API_KEY environment variable on GCP)
-    # wandb.init(
-    #     project = "LDM Training",
-    #     #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
-    #     config=cfg,
-    #     name = f"{model_name}_{hyper_suffix}",
-    #     reinit=True
-    # )
     # The WandbLogger integrates logging with the PL Trainer
     wandb_logger = WandbLogger(project = "LDM Training",
         name=f"{model_type}_{hyper_suffix}", config=cfg,       
         #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
         log_model="all")
+    
+    wandb_logger.experiment.log({"config_forward": cfg["ForwardConfig"]})
 
     # 6. Checkpoint Callback (Saves model states)
     # AIP_MODEL_DIR is the standard Vertex AI output path (e.g., gs://bucket/output_ldm_pl/)
@@ -357,11 +354,12 @@ def main():
 
     patience = cfg['ForwardConfig']['early_stopping_patience'] or 10
 
-    early_stopping = EarlyStopping(
+    early_stopping = DelayedEarlyStopping(
+        start_epoch=50, 
         monitor='val_loss',
         patience=patience,
-        verbose=True,
-        mode='min'
+        mode='min',
+        verbose=True
     )
 
     # 7. Initialize Trainer (Optimized for T4/GCP Cost Saving)
@@ -373,8 +371,7 @@ def main():
         max_epochs=cfg['ForwardConfig']['epochs'],
         precision=16,           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback, early_stopping],
-        limit_train_batches=0.5, limit_val_batches=0.5 # --> we use it to test the code quickly
-        # Example for quick debug run: limit_train_batches=0.1, limit_val_batches=0.1
+        limit_train_batches=0.3, limit_val_batches=0.3 # --> we use it to test the code quickly
     )
 
     # 8. Start Training
@@ -385,6 +382,12 @@ def main():
     wandb.finish()
 
     final_save_dir = os.path.join(checkpoint_path, 'weights')
+
+
+    current_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")        
+    actual_epochs = trainer.current_epoch + 1  # +1 because epochs are zero-indexed
+    hyper_suffix = re.sub(r'E\d+', f'E{actual_epochs}', hyper_suffix)
+    hyper_suffix += f"_ts{current_timestamp}"
 
     final_model_filename = f"{model_type}_final_{hyper_suffix}.pth"
 
