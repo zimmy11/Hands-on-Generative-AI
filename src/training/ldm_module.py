@@ -14,7 +14,7 @@ from src.utils.sde_utils import *
 # from .unet import UNet
 
 class LDMLightningModule(pl.LightningModule):
-    def __init__(self, unet_model, forward_process, vae_encoder, hparams):
+    def __init__(self, unet_model, forward_process, vae_encoder, hparams, cfg):
         super().__init__()
         
         # Save Hyperparameters to W&B/Logger
@@ -32,6 +32,8 @@ class LDMLightningModule(pl.LightningModule):
         self.lr = hparams['learning_rate']
         self.vae_scale_factor = hparams['vae_scale_factor']
         self.n_timesteps = hparams['n_timesteps'] # N for IS calculation
+        self.cfg = cfg 
+
 
     def forward(self, x_t, t):
         """U-Net prediction of epsilon."""
@@ -54,12 +56,18 @@ class LDMLightningModule(pl.LightningModule):
             # Importance Sampling (using the pre-calculated tensor)
             indices = torch.multinomial(is_probabilities, num_samples=batch_size, replacement=True)
             t = (indices.float() / self.n_timesteps).to(device)
+            # p_t = is_probabilities[indices].to(device)
+            
+            # # Importance Sampling Weight: 1 / (N * p(t))
+            # # Dobbiamo dividere per la probabilità di aver scelto questo t per rendere la stima unbiased
+            # importance_weight = 1.0 / (p_t * self.n_timesteps + 1e-10)
+            # importance_weight = importance_weight[:, None, None, None]
         else: 
             # Uniform Sampling (Fallback/Plain Likelihood Weighting)
             t = torch.rand(batch_size, device=device)
 
         # Call the corrected method (z0, t, noise)
-        x_t, epsilon_true, std, sde  = self.forward_process.run_forward(x_start_latents, without_likelihood = True)
+        x_t, epsilon_true, std, sde  = self.forward_process.run_forward(x_start_latents, without_likelihood = True, configurations = self.cfg)
 
         # 4. Network prediction (epsilon_pred)
         epsilon_pred = self(x_t, t)
@@ -72,9 +80,12 @@ class LDMLightningModule(pl.LightningModule):
         
         # Reshape for broadcasting (B, 1, 1, 1)
         weighting_factor = g_squared_tensor[:, None, None, None] 
-        
+
+        #var_t = std**2
+        #weighting_factor = (g_squared_tensor / (std + 1e-8))[:, None, None, None]      
+        #   
         # Total Weighted Loss (L(t) * g(t)^2)
-        weighted_loss = per_sample_loss * weighting_factor
+        weighted_loss = per_sample_loss * weighting_factor # * importance_weight
         
         # Final batch loss (torch.mean over the batch)
         final_loss = torch.mean(weighted_loss)

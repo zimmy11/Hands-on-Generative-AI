@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from typing import Callable, Tuple
 import torch.nn as nn
+import math
  
 class subVP_SDE:
     def __init__(self, beta_min: float =0.1, beta_max: float =20, N: int =1000, schedule: str ="linear"):
@@ -189,8 +190,8 @@ class subVP_SDE:
         g2 = self.get_g_squared(t)
         drift = (-0.5 * beta_t[:, None, None, None] * x) - (g2[:, None, None, None] * scores)
         noise = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=gen)
-        x = x + drift * dt + torch.sqrt(g2  * abs(dt))[:, None, None, None] * noise
-        return x
+        x_ret = x + drift * dt + torch.sqrt(g2  * abs(dt))[:, None, None, None] * noise
+        return x_ret
 
     def probability_flow_euler_step(self, x: torch.Tensor, t: torch.Tensor, dt: float, scores: torch.Tensor):
         """
@@ -201,8 +202,8 @@ class subVP_SDE:
         beta_t = self.beta(t)
         g2 = self.get_g_squared(t)
         drift = (-0.5 * beta_t[:, None, None, None] * x) - (0.5 * g2[:, None, None, None] * scores)
-        x = x + drift * dt
-        return x
+        x_ret = x + drift * dt
+        return x_ret
         
     @torch.no_grad()
     def corrector_langevin(self, x: torch.Tensor, t: torch.Tensor, scores: torch.Tensor, n_steps: int = 50, target_snr: float = 0.16, gen: torch.Generator = None, model: torch.nn.Module = None):
@@ -286,15 +287,15 @@ class subVP_SDE:
         elif estimator == "gaussian":
              e = torch.randn_like(x_req)
         else:
-            raise ValueError("The estimator for the noise value for the Hutchunson's Identity is wrong.")
-
+            raise ValueError
+        
         # Compute v(x) *inside* the graph
         _, std_t = self.marginal_prob_subvp(x_req, t)
         eps_pred = model(x_req, t)
         scores = - eps_pred / (std_t[:, None, None, None] + 1e-20)
         
         v_out = self.v_field(x_req, t, scores)
-        
+
         # Vector-Jacobian Product (VJP)
         grad_v_e = torch.autograd.grad(
             outputs=(v_out * e).sum(), 
@@ -312,3 +313,134 @@ class subVP_SDE:
         v, div_v = self.hutchinson_div_v(x, t, model, estimator)
         
         return v, div_v
+
+# -------------------------------------------------
+# DPM-sampler implemenation
+# -------------------------------------------------
+    def get_lambda(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Computes the log-SNR λ(t).
+
+        Equation:
+            λ(t) = log( α_t / σ_t )
+        
+        Where for sub-VP:
+            α_t = exp(-0.5 * B(t))
+            σ_t = 1 - exp(-B(t))
+        """
+        alpha_t = self.mean_coeff(t)
+        sigma_t = torch.sqrt(self.var(t))
+        return torch.log(alpha_t / (sigma_t + 1e-12))
+
+    def inverse_B(self, B_val: torch.Tensor) -> torch.Tensor:
+        """
+        Computes time t by inverting the noise schedule integral B(t).
+
+        Solves for t:
+            B(t) = ∫_0^t β(s) ds = B_val
+
+        Handles both 'linear' (quadratic in t) and 'exponential' schedules.
+        """
+        if self.schedule == "linear":
+            quadratic_num = -self.beta_0 + torch.sqrt(self.beta_0 ** 2 + 2 * (self.beta_1 + self.beta_0) * B_val)
+            quadratic_den = self.beta_1 - self.beta_0
+            t = quadratic_num / quadratic_den
+            return t
+
+        elif self.schedule == "exponential":
+            k = self._k
+            term = (B_val * k / self.beta_0) + 1.0
+            t = torch.log(term) / k 
+            return t
+        else:
+            raise ValueError("The schedule selected is not allowed. Try 'linear' or 'exponential'.")
+
+    def inverse_lambda(self, lambda_val: torch.Tensor) -> torch.Tensor:
+        """
+        Computes time t from log-SNR λ.
+
+        Method:
+        1. Invert the Sub-VP relation for λ(B):
+           λ = log( exp(-0.5 * B) / (1 - exp(-B)) )
+           
+        2. Solve for B:
+           B = -2 * log( (-1 + √(1 + 4e^2λ)) / 2e^λ )
+           
+        3. Solve t = B⁻¹(B_val).
+        """
+        exp_lambda = torch.exp(lambda_val)
+
+        y = (-1 + torch.sqrt(1 + 4 * exp_lambda ** 2)) / (2.0 * exp_lambda)
+        
+        B_val = -2.0 * torch.log(y)
+        
+        return self.inverse_B(B_val)
+
+    def dpm_solver_update_lambda(self, x, lam_curr, lam_next, eps_curr, prev_eps, prev_h, order):
+        """
+        Performs one DPM-Solver step from λ_t to λ_s (where s < t).
+
+        Exact Solution:
+            x_s = (α_s / α_t) * x_t - σ_s * ∫[λ_t to λ_s] e^(λ - λ_s) * ε_θ(x_λ, λ) dλ
+
+        Implementation:
+            Approximates the integral using Taylor expansion of ε_θ 
+            (Order k = 1, 2, 3) based on history h.
+        """
+        h = lam_next - lam_curr
+        phi_1 = torch.expm1(h)
+
+        t_curr = self.inverse_lambda(lam_curr.unsqueeze(0))
+        t_next = self.inverse_lambda(lam_next.unsqueeze(0))
+
+
+        alpha_curr = self.mean_coeff(t_curr)
+        alpha_next = self.mean_coeff(t_next)
+        
+        sigma_next = torch.sqrt(self.var(t_next))
+        ratio = alpha_next / alpha_curr
+
+        if order == 1 or len(prev_eps) == 0:
+            integral = phi_1 * eps_curr
+        
+        elif order == 2 or len(prev_eps) == 1:
+            eps_prev = prev_eps[-1]
+            h_prev = prev_h[-1]
+
+            r0 = h_prev / h
+
+            D1 = (1.0 / r0) * (eps_curr - eps_prev)
+            integral = phi_1 * eps_curr + (phi_1 - h) * D1
+            
+        else:
+            eps_s1 = prev_eps[-1]
+            eps_s2 = prev_eps[-2]
+
+            h_s1 = prev_h[-1]
+            h_s2 = prev_h[-2]
+
+            r0 = h_s1 / h
+            r1 = h_s2 / h
+
+            D1_0 = (1.0 / r0) * (eps_curr - eps_s1)
+            D1_1 = (1.0 / r1) * (eps_s1 - eps_s2)
+
+            D2 = (1.0 / (r0 + r1)) * (D1_0 - D1_1)
+
+            phi_2 = phi_1 - h
+            phi_3 = phi_2 - 0.5 * (h ** 2)
+            # we are taking Taylor overall: e^h - h - 0.5 * (h^2)
+
+            integral = phi_1 * eps_curr + phi_2 * D1_0 + phi_3 * D2
+            # so we are taking:
+            # phi_1  * eps_curr = assuming noise is constat
+            # phi_2 * D1_0: adjusting the path based on the slope
+            # phi_3 * D2: adjusting the path based on the curvature
+
+        x_next = ratio.to(x.device) * x - sigma_next.to(device) * integral
+        return x_next
+            
+        
+        
+
+
