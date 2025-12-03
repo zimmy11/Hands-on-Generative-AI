@@ -6,6 +6,9 @@ beta_max: 20.0        # Beta schedule maximum (beta_1)
 n_timesteps: 1000      # N value for the diffusion schedule (T=1.0)
 schedule: 'linear'
 seed: 42
+sde_type: "subVP"
+
+#ATTENZIONE !!!!!!!!!!!!!!!!!
 
 # --- FORWARD PROCESS PARAMETERS
 t_forward: 1.0
@@ -20,9 +23,14 @@ corrector: False
 n_corr: 50
 target_snr: 0.16
 rev_type: 'sde'
+solver: "euler" # it can be ['euler', 'dpm']
+
+
+#ATTENZIONE !!!!!!!!!!!!!!!!!
 
 # --- DPM Solver
 # we define the order as the different order of approximation of DPM-Solver++
+dpm_steps: 25
 skip_type: "logSNR" # here only 'logSNR' or 'uniform' is allowed
 order: 3
 

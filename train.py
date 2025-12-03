@@ -122,6 +122,7 @@ def main():
     parser.add_argument('--n-timesteps', type=int)
     parser.add_argument('--schedule', type=str)
     parser.add_argument('--seed', type=int)
+    parser.add_argument('--sde_type', type=str)
 
     parser.add_argument('--t-forward', type=float)
     parser.add_argument('--final', type=bool)
@@ -133,7 +134,12 @@ def main():
     parser.add_argument('--corrector', type=bool)
     parser.add_argument('--n-corr', type=int)
     parser.add_argument('--target-snr', type=float)
-    parser.add_argument('--rev-type', type=str)
+    parser.add_argument('--rev_type', type=str)
+    parser.add_argument('--solver', type=str)
+
+    parser.add_argument('--dmp_steps', type=int)
+    parser.add_argument('--skip_type', type=str)
+    parser.add_argument('--order', type=int)
 
     parser.add_argument('--epochs', type=int)
     parser.add_argument('--learning-rate', type=float)
@@ -171,6 +177,7 @@ def main():
     N_timesteps = get_param('n_timesteps', args.n_timesteps)
     schedule   = get_param('schedule', args.schedule)
     seed       = get_param('seed', args.seed)
+    sde_type       = get_param('sde_type', args.sde_type)
 
     t_forward  = get_param('t_forward', args.t_forward)
     final      = get_param('final', args.final)
@@ -183,6 +190,11 @@ def main():
     n_corr     = get_param('n_corr', args.n_corr)
     target_snr = get_param('target_snr', args.target_snr)
     rev_type   = get_param('rev_type', args.rev_type)
+    solver   = get_param('solver', args.solver)
+
+    dpm_steps     = get_param('dpm_steps', args.dpm_steps)
+    skip_type = get_param('skip_type', args.skip_type)
+    order  = get_param('order', args.order)
 
     epochs     = get_param('epochs', args.epochs)
     lr         = get_param('learning_rate', args.learning_rate)

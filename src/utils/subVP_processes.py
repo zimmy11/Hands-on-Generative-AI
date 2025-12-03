@@ -1,6 +1,7 @@
 from typing import Optional, Tuple
 import torch
-from src.utils.subVP_SDE import subVP_SDE
+# from src.utils.subVP_SDE import subVP_SDE
+from src.utils.SDE import GaussianDiffusionSDE
 from src.utils.Configurations import ForwardConfig, ReverseConfig, LikelihoodConfig
 import torch.nn as nn
 
@@ -45,7 +46,7 @@ class DiffusionProcesses:
             t_val = 
 
         # Building the SDE on the same device of the latent vector
-        sde = subVP_SDE(beta_min=cfg['beta_min'], beta_max=cfg['beta_max'], N=cfg['N'])
+        sde = GaussianDiffusionSDE(beta_min=cfg['beta_min'], beta_max=cfg['beta_max'], N=cfg['N'])
 
         if cfg['closed_formula']:
             t_tensor = t
@@ -89,7 +90,7 @@ class DiffusionProcesses:
         device = next(model.parameters()).device
         dtype = torch.float32
 
-        sde = subVP_SDE(beta_min=cfg['beta_min'], beta_max=cfg['beta_max'], N=cfg['N'])
+        sde = GaussianDiffusionSDE(beta_min=cfg['beta_min'], beta_max=cfg['beta_max'], N=cfg['N'])
         
         gen = torch.Generator(device = device).manual_seed(cfg['seed'])
 
@@ -138,102 +139,104 @@ class DiffusionProcesses:
 # -------------------------------------------------
 
     @torch.no_grad()
-def sample_dpm(self, model, x_0, steps=20, method="multistep"):
-    """
-    DPM-Solver Sampling Loop.
-    
-    Args:
-        model: The score network (noise).
-        sde: The subVP_SDE object containing the helper methods.
-        x: is sampled form N(0, I).
-        steps: Number of sampling steps (NFE).
-        order: DPM-Solver order (1, 2, or 3).
-        skip_type: "logSNR" (recommended) or "time_uniform".
-    """
-    cfg = self.config['ReverseConfig']
+    def sample_dpm(self, model: nn.Module):
+        """
+        DPM-Solver Sampling Loop.
         
-    device = next(model.parameters()).device
-    dtype = torch.float32
-
-    sde = subVP_SDE(beta_min=cfg['beta_min'], beta_max=cfg['beta_max'], N=cfg['N'])
-    
-    gen = torch.Generator(device = device).manual_seed(cfg['seed'])
-
-    x = torch.randn(*cfg['shape'], device = cfg['device'], dtype = cfg['dtype'], generator = gen)
-    
-    # Define the time Boundaries (from 1.0 to 0.0)
-    t_start = cfg['beta_max']
-    t_end = cfg['beta_min'] + 1e-5
-    
-    # Lambda Space
-    if cfg['skip_type'] == "logSNR":
-        # Uniform steps in Lambda space (optimal for DPM-Solver)
-        lambda_T = sde.get_lambda(torch.tensor([t_start], device=device))
-        lambda_0 = sde.get_lambda(torch.tensor([t_end], device=device))
-        lambda_steps = torch.linspace(lambda_T.item(), lambda_0.item(), steps + 1, device=device)
-    elif cfg['skip_type'] == 'uniform':
-        # Uniform steps in Time space (converted to lambda)
-        t_steps = torch.linspace(t_start, t_end, steps + 1, device=device)
-        lambda_steps = sde.get_lambda(t_steps)
-    else:
-        raise ValueError("The skip_type inserted for the DPM-Solver is wrong, either choose 'logSNR' or 'uniform'")
-    
-    # History for Multistep method
-    prev_eps = []
-    prev_h = []
-    
-    # Sampling Loop
-    for i in range(steps):
-        # Getting current and next lambda
-        lam_curr = lambda_steps[i]
-        lam_next = lambda_steps[i+1]
-        
-        # Calculate step size h
-        h = lam_next - lam_curr
-        
-        # Get time t to query the model
-        t_curr_scalar = sde.inverse_lambda(lam_curr.unsqueeze(0))
-        t_vec = t_curr_scalar.expand(x.shape[0]).to(device)
-        
-        # Model Forward Pass
-        # The model is outputting the noise
-        epsilon_t = model(x, t_vec)
-        
-        # DPM-Solver Update
-        x = sde.dpm_solver_update_lambda(
-            x, 
-            lam_curr, 
-            lam_next, 
-            epsilon_t, 
-            prev_eps, 
-            prev_h, 
-            cfg['order']
-        )
-        
-        # Update History
-        # Store epsilon
-        prev_eps.append(epsilon_t)
-        if len(prev_eps) > order - 1:
-            prev_eps.pop(0)
+        Args:
+            model: The score network (noise).
+            sde: The subVP_SDE object containing the helper methods.
+            x: is sampled form N(0, I).
+            steps: Number of sampling steps (NFE).
+            order: DPM-Solver order (1, 2, or 3).
+            skip_type: "logSNR" (recommended) or "time_uniform".
+        """
+        cfg = self.config['ReverseConfig']
             
-        # Store step size h, necessary for non-uniform steps
-        prev_h.append(h)
-        if len(prev_h) > order - 1:
-            prev_h.pop(0)
+        device = next(model.parameters()).device
+        dtype = torch.float32
+    
+        sde = GaussianDiffusionSDE(beta_min=cfg['beta_min'], beta_max=cfg['beta_max'], N=cfg['N'])
+        
+        gen = torch.Generator(device = device).manual_seed(cfg['seed'])
+    
+        x = torch.randn(*cfg['shape'], device = cfg['device'], dtype = cfg['dtype'], generator = gen)
+        
+        # Define the time Boundaries (from 1.0 to 0.0)
+        t_start = cfg['beta_max']
+        t_end = cfg['beta_min'] + 1e-5
+        
+        # Lambda Space
+        if cfg['skip_type'] == "logSNR":
+            # Uniform steps in Lambda space (optimal for DPM-Solver)
+            lambda_T = sde.get_lambda(torch.tensor([t_start], device=device))
+            lambda_0 = sde.get_lambda(torch.tensor([t_end], device=device))
+            lambda_steps = torch.linspace(lambda_T.item(), lambda_0.item(), steps + 1, device=device)
+        elif cfg['skip_type'] == 'uniform':
+            # Uniform steps in Time space (converted to lambda)
+            t_steps = torch.linspace(t_start, t_end, steps + 1, device=device)
+            lambda_steps = sde.get_lambda(t_steps)
+        else:
+            raise ValueError("The skip_type inserted for the DPM-Solver is wrong, either choose 'logSNR' or 'uniform'")
+        
+        # History for Multistep method
+        prev_eps = []
+        prev_h = []
+        
+        # Sampling Loop
+        for i in range(cfg['dpm_steps']):
+            # Getting current and next lambda
+            lam_curr = lambda_steps[i]
+            lam_next = lambda_steps[i+1]
             
-    return x
+            # Calculate step size h
+            h = lam_next - lam_curr
+            
+            # Get time t to query the model
+            t_curr_scalar = sde.inverse_lambda(lam_curr.unsqueeze(0))
+            t_vec = t_curr_scalar.expand(x.shape[0]).to(device)
+            
+            # Model Forward Pass
+            # The model is outputting the noise
+            epsilon_t = model(x, t_vec)
+            
+            # DPM-Solver Update
+            x = sde.dpm_solver_update_lambda(
+                x, 
+                lam_curr, 
+                lam_next, 
+                epsilon_t, 
+                prev_eps, 
+                prev_h, 
+                cfg['order']
+            )
+            
+            # Update History
+            # Store epsilon
+            prev_eps.append(epsilon_t)
+            if len(prev_eps) > order - 1:
+                prev_eps.pop(0)
+                
+            # Store step size h, necessary for non-uniform steps
+            prev_h.append(h)
+            if len(prev_h) > order - 1:
+                prev_h.pop(0)
+                
+        return x
 # -------------------------------------------------
 # General reverse process runner
 # -------------------------------------------------
-    def run_reverse(self, model:nn.Module, likelihood: bool = False):
-        if not likelihood:
+    def run_reverse(self, model:nn.Module): # removed the likelihood
+        if self.config['ReverseConfig']['solver'] == "euler":
             return self.sample_reverse(model)
+        elif self.config['ReverseConfig']['solver'] == "dpm":
+            return self.sample_dpm(model)
         else:
-            # lcfg = LikelihoodConfig()
-            # return self.log.likelihood_subvp_ode(
-            raise ValueError("Attencion Likelihood is still in validation phase. not available yet")
+            raise ValueError("The solver parameter in ReverseConfig is wrong.")
 
-
+# -------------------------------------------------
+# Likelihood estimator process
+# -------------------------------------------------
     def loglikelihood_subvp_ode(x0: torch.Tensor, model: nn.Module):
         """
         Integrating the ODE for x_t and simultaneously, the log-density via the instantaneous change of variable formula: ODE x^ = v(x,t)
@@ -253,7 +256,7 @@ def sample_dpm(self, model, x_0, steps=20, method="multistep"):
         log_det = torch.zeros(B_size, device=device)
         t_grid = torch.linspace(0.0, 1.0, lcfg['N'] + 1, device = device)
         
-        ode = subVP_SDE(beta_min=lcfg['beta_min'], beta_max=lcfg['beta_max'], N=lcfg['N'])
+        ode = GaussianDiffusionSDE(beta_min=lcfg['beta_min'], beta_max=lcfg['beta_max'], N=lcfg['N'])
         
         for k in range(lcfg['steps']):
             t = t_grid[k].expand(B_size)
