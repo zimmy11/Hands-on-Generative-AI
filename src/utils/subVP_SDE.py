@@ -313,3 +313,14 @@ class subVP_SDE:
         v, div_v = self.hutchinson_div_v(x, t, model, estimator)
         
         return v, div_v
+    
+    def debug_schedule(self):
+        """Stampa i valori critici dello schedule."""
+        t_test = torch.tensor([0.0, 0.5, 1.0])
+        mean_coeff = self.mean_coeff(t_test)
+        std = torch.sqrt(self.var(t_test))
+        print(f"\n[DEBUG SDE Schedule]")
+        print(f"  t=0.0 -> Mean Coeff: {mean_coeff[0]:.4f} (Exp: ~1.0), Std: {std[0]:.4f} (Exp: 0.0)")
+        print(f"  t=1.0 -> Mean Coeff: {mean_coeff[2]:.4f} (Exp: ~0.0), Std: {std[2]:.4f} (Exp: ~1.0)")
+        if std[0] > 0.01:
+            print("  WARNING: Std a t=0 non è zero! Il modello non vedrà mai l'immagine pulita.")

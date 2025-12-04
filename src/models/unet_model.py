@@ -5,7 +5,7 @@ from .components import SinusoidalPositionEmbeddings
 
 # Residual Block
 class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels = None, time_embed_dim=128, num_groups=32, self_attention=False, dropout=0.1):
+    def __init__(self, in_channels, out_channels = None, head_dim = 64, time_embed_dim=128, num_groups=32, self_attention=False, dropout=0.1):
         super().__init__()
 
         self.out_channels = out_channels if out_channels else in_channels
@@ -38,31 +38,39 @@ class ResBlock(nn.Module):
         # --- Attention (optional) ---
         self.use_attention = self_attention
         if self_attention:
+
+            num_heads = self.out_channels // head_dim
             self.norm_attn = nn.GroupNorm(num_groups, self.out_channels)
-            self.attn = nn.MultiheadAttention(self.out_channels, num_heads=4, batch_first=True)
+            self.attn = nn.MultiheadAttention(self.out_channels, num_heads=num_heads, batch_first=True)
 
     
     def forward(self, x, t_emb):
         h = x
         
-        # --- Block 1: Pre-Normalization + Conv ---
+        #print(f"  [ResBlock] Input: {x.shape} | Mean: {x.mean():.3f} | Std: {x.std():.3f}")
+
+        # --- Block 1 ---
         h = self.norm1(h)
         h = self.act(h)
         h = self.conv1(h)
         
-        # --- Inject Time Embedding via FiLM ---
-        # Compute scale and shift from time embedding
+        #print(f"  [ResBlock] After Conv1: {h.shape}")
 
+        # --- Inject Time Embedding via FiLM ---
         emb = self.time_proj(t_emb)[:, :, None, None]  # [B, 2C, 1, 1]
         scale, shift = emb.chunk(2, dim=1)
         
-        # --- Block 2: Pre-Norm + FiLM modulation + Conv ---
+        #print(f"  [ResBlock] Time Emb Scale/Shift: {scale.shape}")
+
+        # --- Block 2 ---
         h = self.norm2(h)
-        h = h * (1 + scale) + shift  # Apply FiLM (Feature-wise Linear Modulation)
+        h = h * (1 + scale) + shift  # FiLM modulation
         h = self.act(h)
         h = self.dropout(h)
         h = self.conv2(h)
-        
+
+        #print(f"  [ResBlock] After Conv2 (FiLM applied): {h.shape}")
+
         # --- Residual connection ---
         out = h + self.shortcut(x)
         
@@ -71,17 +79,20 @@ class ResBlock(nn.Module):
             residual = out
             out = self.norm_attn(out)
             
-            # Reshape [B, C, H, W] -> [B, Seq, C] for MultiheadAttention
             b, c, h_dim, w_dim = out.shape
             out = out.view(b, c, h_dim * w_dim).transpose(1, 2)  # [B, Seq, C]
             
-            # Apply multi-head self-attention
+            #print(f"  [ResBlock] Entering Attention. Seq Len: {h_dim*w_dim}, Channels: {c}")
+
             out, _ = self.attn(out, out, out)
             
-            # Reshape back to [B, C, H, W] and add residual
             out = out.transpose(1, 2).view(b, c, h_dim, w_dim)
             out = out + residual
             
+        #print(f"  [ResBlock] After Attention: {out.shape}")
+            
+        #print(f"  [ResBlock] Output: {out.shape} | Mean: {out.mean():.3f}\n")
+
         return out
 
 
@@ -92,7 +103,7 @@ class UNet(nn.Module):
     LDM UNet model skeleton.
     """
 
-    def __init__(self, in_channels = 128, out_channels = 4, num_blocks = 2, time_emb_dim = 128, features=[128, 256, 512]):
+    def __init__(self, in_channels = 4, out_channels = 4, num_blocks = 2, time_emb_dim = 128, features=[128, 256, 512]):
         super(UNet, self).__init__()
 
 
@@ -131,8 +142,8 @@ class UNet(nn.Module):
         for next_channels in features[1:]:
             level_blocks = nn.ModuleList()
             for _ in range(num_blocks):
-                use_attn = (current_channels >= 256)
-                block = ResBlock(current_channels, time_embed_dim=time_emb_dim, num_groups = min(current_channels//32, 32), self_attention=use_attn)
+                #use_attn = (current_channels >= 256)
+                block = ResBlock(current_channels, time_embed_dim=time_emb_dim, num_groups = 32, self_attention=True)
                 level_blocks.append(block)
 
             # Output size halved (DownSampling Layer)
@@ -143,8 +154,8 @@ class UNet(nn.Module):
 
         # Bottleneck
         self.bottleneck = nn.ModuleList([
-        ResBlock(features[-1], time_embed_dim=time_emb_dim, num_groups = min(features[-1]//32, 32), self_attention=True),
-        ResBlock(features[-1], time_embed_dim=time_emb_dim, num_groups = min(features[-1]//32, 32), self_attention=True)])
+        ResBlock(features[-1], time_embed_dim=time_emb_dim, num_groups = 32, self_attention=True),
+        ResBlock(features[-1], time_embed_dim=time_emb_dim, num_groups = 32, self_attention=True)])
 
 
         # Decoder
@@ -180,16 +191,16 @@ class UNet(nn.Module):
                 else: 
                     block_in = out_channels_level
                 
-                use_attn = (out_channels_level >= 256)
-                block = ResBlock(in_channels = block_in, out_channels = out_channels_level, time_embed_dim=time_emb_dim, num_groups = min(out_channels_level//32, 32), self_attention=use_attn)
+                #use_attn = (out_channels_level >= 256)
+                block = ResBlock(in_channels = block_in, out_channels = out_channels_level, time_embed_dim=time_emb_dim, num_groups = 32, self_attention=True)
                 level_blocks.append(block)
             
             self.dec_layers.append(level_blocks)
 
 
-        in_channels = features[0]
+        in_channels = features[0] *2 
         self.out_conv = nn.Sequential(
-        nn.GroupNorm(num_groups= min(in_channels//32, 32), num_channels=in_channels),
+        nn.GroupNorm(num_groups= 32, num_channels=in_channels),
         nn.SiLU(),
         nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1))
         
@@ -197,46 +208,73 @@ class UNet(nn.Module):
 
     def forward(self, x, time):
 
-        if time.dtype == torch.float32 and time.max() <= 1.0:
-            time = time * 1000.0
+
+
+        #print(f"\n{'='*20} UNet FORWARD PASS START {'='*20}")
+        #print(f"INPUT | x: {x.shape} | time: {time.shape}")
 
         time_sin = self.time_proj(time)         
         t_emb = self.time_mlp(time_sin)
-
+        #print(f"TIME EMB | t_emb shape: {t_emb.shape}")
 
         x = self.init_conv(x)
-        # skip connections
-        skips = [x]
+        #print(f"INIT CONV | x shape: {x.shape}")
+        
+        # Skip connections list
+        main_skip = x
+        skips = []
 
-        # encoder
-        for blocks, down in zip(self.enc_layers, self.downsamples):
+        # --- ENCODER ---
+        #print(f"\n--- ENCODER ---")
+        for i, (blocks, down) in enumerate(zip(self.enc_layers, self.downsamples)):
             for blk in blocks:
                 x = blk(x, t_emb)
+            
             skips.append(x)
+            #print(f"Enc Layer {i} | Storing SKIP connection: {x.shape}")
+            
             x = down(x)
+            #print(f"Enc Layer {i} | After DOWNSAMPLE: {x.shape}")
         
-        # skip = [Encoder 1 --> 128 x 32 x 32 , Encoder 2 --> 256 x 16 x 16]
-        # bottleneck
+        # --- BOTTLENECK ---
+        #print(f"\n--- BOTTLENECK ---")
         for layer in self.bottleneck:
             x = layer(x, t_emb)
+        #print(f"Bottleneck Out: {x.shape}")
 
-        # decoder for skip connections
+        # --- DECODER ---
+        #print(f"\n--- DECODER ---")
         skip_iterator = reversed(skips)
-        for up, blocks in zip(self.upsamples, self.dec_layers):
+        
+        for i, (up, blocks) in enumerate(zip(self.upsamples, self.dec_layers)):
+            # 1. Upsample
             x = up(x)
             
+            # 2. Prendi lo skip corrispondente
             skip = next(skip_iterator)
             
-            # Interpolazione di sicurezza (raramente serve se le dimensioni sono potenze di 2)
+            #print(f"Dec Layer {i} | Upsampled x: {x.shape} | Skip to cat: {skip.shape}")
+            
+            # 3. Check interpolazione
             if x.shape[-2:] != skip.shape[-2:]:
+                #print(f"Dec Layer {i} | !!! MISMATCH !!! Resizing x from {x.shape[-2:]} to {skip.shape[-2:]}")
                 x = F.interpolate(x, size=skip.shape[-2:], mode='bilinear', align_corners=False)            
             
-            # Concatenazione
+            # 4. Concatenazione
             x = torch.cat([x, skip], dim=1)
+            #print(f"Dec Layer {i} | After CONCAT: {x.shape} (Channels must match block_in)")
             
-            # Passaggio nei blocchi (ora gestiscono loro i canali)
+            # 5. ResBlocks
             for blk in blocks:
                 x = blk(x, t_emb)
+            
+            #print(f"Dec Layer {i} | After ResBlocks: {x.shape}")
+
+        # --- OUTPUT ---
+        x = torch.cat([x, main_skip], dim=1)
+        #print(f"After FINAL CONCAT: {x.shape} (Ready for out_conv)")
 
         out = self.out_conv(x)
+        #print(f"\nFINAL OUTPUT | {out.shape}")
+        #print(f"{'='*20} UNet FORWARD PASS END {'='*20}\n")
         return out

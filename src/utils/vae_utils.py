@@ -26,6 +26,7 @@ def get_vae_encoder_func(device):
             """
             Encodes the batch of pixel values (in [-1, 1]) to the raw latent space.
             """
+
             # The VAE returns a Gaussian distribution (posterior)
             posterior = vae.encode(pixel_values).latent_dist
             
@@ -36,7 +37,18 @@ def get_vae_encoder_func(device):
             # It will be applied in the LDMLightningModule for better control.
             return latents
             
-        return encode_to_latent
+        @torch.no_grad()
+        def decode_from_latent(latents: torch.Tensor) -> torch.Tensor:
+            """
+            Input: Latents (B, 4, H/8, W/8)
+            Output: Image (B, 3, H, W) in range [-1, 1]
+            Note: Expects latents that have ALREADY been divided by vae_scale_factor
+            """
+            # vae.decode returns a DecoderOutput object, we need .sample
+            image = vae.decode(latents).sample
+            return image
+            
+        return encode_to_latent, decode_from_latent
         
     except Exception as e:
         print(f"Error loading VAE model: {e}")

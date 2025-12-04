@@ -4,13 +4,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class SinusoidalPositionEmbeddings(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, scale = 1000.0):
         super().__init__()
         self.dim = dim
+        self.scale = scale
 
     def forward(self, time):
         
         device = time.device
+        time = time * self.scale
         half_dim = self.dim // 2
         
         # 'embeddings' will be (B, half_dim)
@@ -27,3 +29,5 @@ class SinusoidalPositionEmbeddings(nn.Module):
             embeddings = F.pad(embeddings, (0, 1), mode='constant', value=0)
             
         return embeddings
+    
+    

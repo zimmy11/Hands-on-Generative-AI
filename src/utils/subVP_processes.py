@@ -1,11 +1,11 @@
 from typing import Optional, Tuple
 import torch
 from src.utils.subVP_SDE import subVP_SDE
-from src.utils.Configurations import ForwardConfig, ReverseConfig, LikelihoodConfig
 import torch.nn as nn
-
+from torchvision.utils import save_image
+from src.utils.vae_utils import get_vae_encoder_func
 import time
-
+import os
 
 class DiffusionProcesses:
     def __init__(self, configurations: dict):
@@ -16,7 +16,7 @@ class DiffusionProcesses:
         self.schedule = cfg['schedule']
 
     @torch.no_grad()
-    def get_noised_latents(self, z0: torch.Tensor, configurations: dict):
+    def get_noised_latents(self, z0: torch.Tensor, configurations: dict, is_times: torch.Tensor = None):
         """Return noised latents z_t, along with the exact epsilon used and std(t).
         
         Inputs:
@@ -38,16 +38,28 @@ class DiffusionProcesses:
         """
         cfg = configurations['ForwardConfig']
         
+        print(f"Forward till final: {cfg['final']}")
         if cfg['final']:
             t_val = 1.0 - float(cfg['eps'])
-        else:
-            t_val = 0.5 if cfg['t'] is None else float(cfg['t'])
+            t_tensor = torch.full((z0.size(0),), t_val, device=z0.device, dtype=z0.dtype)
 
+        else:
+            if is_times is None:
+                t_tensor = torch.randn_like(z0[:, 0, 0, 0], device=z0.device, dtype=z0.dtype).clamp(0.0 + 1e-5, 1.0 - 1e-5)
+
+            else:
+                if is_times.shape[0] == z0.shape[0]:
+                    t_tensor = is_times
+                else:
+                    raise ValueError("is_times length must match batch size of z0")
+
+        
+        print(f"[DEBUG DiffusionProcesses] Using t values: Min={t_tensor.min().item():.4f}, Max={t_tensor.max().item():.4f}, Shape={t_tensor.shape}")
         # Building the SDE on the same device of the latent vector
         sde = subVP_SDE(beta_min=cfg['beta_min'], beta_max=cfg['beta_max'], N=cfg['N'])
 
+
         if cfg['closed_formula']:
-            t_tensor = torch.full((z0.size(0),), t_val, device=z0.device, dtype=z0.dtype)
             z_t, epsilon, std = sde.perturb_closed(z0, t_tensor)
         else:
             # t_tensor = torch.tensor([t_val], device=z0.device, dtype=z0.dtype)
@@ -56,21 +68,18 @@ class DiffusionProcesses:
         return z_t, epsilon, std, sde
 
     @torch.no_grad()
-    def run_forward(self, z0, without_likelihood = True, configurations = dict()):
+    def run_forward(self, z0, configurations = dict(), is_times: torch.Tensor = None):
         """
         Execute the forward process for the latent noised variables with the parameters passed in Configurations
         """
-
-
-        if without_likelihood:
-            cfg = configurations
-            z_t, epsilon, std, sde = self.get_noised_latents(
-                z0, cfg
-            )
+        cfg = configurations
+        
+        z_t, epsilon, std, sde = self.get_noised_latents(
+            z0, cfg, is_times = is_times)
 
         return z_t, epsilon, std, sde
     
-    def sample_reverse(self, configurations: dict, model: nn.Module):
+    def sample_reverse(self, configurations: dict, model: nn.Module, save_dir: str = "./samples"):
         """
         We are implementing the sampling through reversing the SDE.
 
@@ -87,18 +96,19 @@ class DiffusionProcesses:
         4. \nabla log p(x_t) = - eps / σ_t
         """
         cfg = configurations['ReverseConfig']
-        
-        device = next(model.parameters()).device
+        device = cfg['device']
+        vae_scale_factor = cfg.get('vae_scale_factor', 0.18215)
+        _, decode_func = get_vae_encoder_func(device) 
         dtype = torch.float32
 
         sde = subVP_SDE(beta_min=cfg['beta_min'], beta_max=cfg['beta_max'], N=cfg['N'])
         
-        gen = torch.Generator(device = device).manual_seed(cfg['seed'])
+        gen = torch.Generator(device=cfg['device']).manual_seed(cfg['seed'])
 
         x = torch.randn(*cfg['shape'], device = cfg['device'], dtype = cfg['dtype'], generator = gen)
 
         #Time discretization for reversion execution
-        t_grid = torch.linspace(cfg['t0'], cfg['t1'], cfg['N'] + 1, device = device, dtype = dtype)
+        t_grid = torch.linspace(cfg['t0'] + cfg['eps'] , cfg['t1'] - cfg['eps'], cfg['N'] + 1, device = device, dtype = dtype)
 
         model = model.to(device = device, dtype = dtype).eval()
         
@@ -109,9 +119,33 @@ class DiffusionProcesses:
         #Reverse process loop
         with torch.no_grad():
             for k in range(cfg['N']):
-                if k % n_steps == 0:
+
+                if k % 100 == 0:
+                    x_min, x_max = x.min().item(), x.max().item()
+                    print(f"  Step {k}/{cfg['N']} - x range: [{x_min:.2f}, {x_max:.2f}]")
+                    if x_max > 100 or x_min < -100:
+                        print("  WARNING: Latents exploding! Adding clamp.")
+                        x = torch.clamp(x, -5.0, 5.0) # Safety clamp
+                    if torch.isnan(x).any():
+                        print("  CRITICAL: NaN in sampling loop!")
+                        break
                     time_elapsed, start_time = time.time() - start_time, time.time()
+
                     print(f"Summary stats:\nSteps done: {k}\nTime of last {n_steps} steps: {time_elapsed}\nAverage time of last {n_steps} steps: {time_elapsed/n_steps}\nOverall time:{time.time()-start_time_fixed}")
+                
+                if k % 200 == 0 and k > 0 :
+                    print("Generating intermediate samples...")
+                    latents_to_decode = x / vae_scale_factor
+                    with torch.no_grad():
+                        x_decoded = decode_func(latents_to_decode)
+                    os.makedirs(save_dir, exist_ok=True)
+                    filename = f"LDM_{cfg['epochs']}_step_{k:04d}.png"
+                    save_image(x_decoded, os.path.join(save_dir, filename), normalize=True, value_range=(-1, 1), nrow=4)
+                    torch.cuda.empty_cache()
+                    print(f"✅ Saved sample in: {os.path.join(save_dir, filename)}")
+
+
+
                 t_k = t_grid[k].expand(cfg['shape'][0])
                 t_k1 = t_grid[k+1].expand(cfg['shape'][0])
                 dt = (t_k1[0] - t_k[0])
@@ -123,6 +157,9 @@ class DiffusionProcesses:
                 eps_pred = model(x, t_k)
                 scores = - eps_pred / (std_t[:, None, None, None] + 1e-12)
                 
+
+                
+
                 #Predictor
                 if cfg['rev_type'] == "sde":
                     x = sde.reverse_euler_step(x, t_k, dt, scores, gen = gen)
@@ -142,7 +179,7 @@ class DiffusionProcesses:
         else:
             # lcfg = LikelihoodConfig()
             # return self.log.likelihood_subvp_ode(
-            raise ValueError("Attencion Likelihood is still in validation phase. not available yet")
+            raise ValueError("Attention Likelihood is still in validation phase. not available yet")
 
 
     def loglikelihood_subvp_ode(x0: torch.Tensor, model: nn.Module, configurations: dict):
