@@ -8,7 +8,7 @@ def calculate_importance_sampling_probabilities(sde_model, N_timesteps, device):
     Calcola il tensore di probabilità p_IS per l'Importance Sampling.
     p(t) ∝ g(t)^2 / λ_orig(t)
     """
-    epsilon = 1e-8 # Per stabilità numerica (evitare divisioni per zero)
+    epsilon = 1e-5 # Per stabilità numerica (evitare divisioni per zero)
     T_max = 1.0 - epsilon 
 
     # 1. Crea il vettore di timestep continui da [eps, 1.0]

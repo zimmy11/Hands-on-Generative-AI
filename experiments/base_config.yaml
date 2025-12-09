@@ -29,7 +29,7 @@ learning_rate: 0.0001
 batch_size: 16
 model: 'LDM'  # Model type: 'ldm' for Latent Diffusion Model
 # --- SDE/DIFFUSION SCHEDULE PARAMETERS (subVP SDE) ---
-use_importance_sampling: True # Set to True to use g(t)^2 / lambda_orig(t) sampling
+use_importance_sampling: False # Set to True to use g(t)^2 / lambda_orig(t) sampling
 
 # MODEL PARAMETERS ---
 latent_channels: 4          # LATENT_CHANNELS

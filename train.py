@@ -97,7 +97,7 @@ def setup(cfg, data_path: str, device: torch.device):
     
     # Initialize ForwardProcess (contains the subVP_SDE instance)
     forward_process = DiffusionProcesses(cfg)
-    sde = subVP_SDE(beta_min=forward_cfg['beta_min'], beta_max=forward_cfg['beta_max'], N=forward_cfg['N'])
+    sde = VESDE()
 
     # C. Importance Sampling Calculation (IS)
     is_probabilities = None
@@ -109,6 +109,8 @@ def setup(cfg, data_path: str, device: torch.device):
             forward_cfg['N'], 
             device
         )
+    else:
+        is_probabilities = torch.ones(forward_cfg['N'], device=device) / forward_cfg['N']
 
     # D. Prepare Hparams for PL Module & Early Stopping
     hparams = {
@@ -525,10 +527,10 @@ def main():
     # 8. Initialize Trainer (Optimized for T4/GCP Cost Saving)
     trainer = Trainer(
         logger=wandb_logger,
-        accelerator="cuda",
-        devices=1,                      # Use 1 T4 GPU
+        accelerator="cpu",
+        devices="auto",                      # Use 1 T4 GPU
         max_epochs=epochs,
-        precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
+        # precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback], #, early_stopping],
         limit_train_batches=1, 
         limit_val_batches=1 # --> we use it to test the code quickly
