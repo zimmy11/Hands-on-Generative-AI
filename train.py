@@ -58,7 +58,8 @@ def setup(cfg, data_path: str, device: torch.device):
         transform = transforms.Compose([transforms.CenterCrop(178), transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize([0.5]*3, [0.5]*3)])
 
         full_dataset = datasets.CelebA(
-            root="./data",
+            root="../data",
+            # root = data_path
             split="train",
             target_type="attr",
             transform=transform,
