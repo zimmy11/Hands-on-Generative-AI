@@ -11,3 +11,10 @@ __pycache__/
 */.ipynb_checkpoints/
 
 dist/
+
+# Stop tracking the specific folders of images
+git rm -r --cached notebooks/samples/
+git rm -r --cached notebooks/weights_visualization/
+
+# Stop tracking the specific images in the root images folder (if they were tracked)
+git rm -r --cached images/

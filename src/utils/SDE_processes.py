@@ -41,6 +41,24 @@ class DiffusionProcesses:
         z_t, epsilon, std, sde = self.get_noised_latents(
             z0, cfg, is_times = is_times)
 
+        # To check actual noising we compute some core statistics
+        z0_mean = z0.mean()
+        z0_std = z0.std(unbiased = False)
+        z0_standardized = (z0 - z0_mean)/z0_std
+        z0_skew = torch.mean(z0_standardized ** 3)
+        z0_kurtosis = torch.mean(z0_standardized ** 4)
+
+        z_t_mean = z_t.mean()
+        z_t_std = z_t.std(unbiased = False)
+        z_t_standardized = (z_t - z_t_mean)/z_t_std
+        z_t_skew = torch.mean(z_t_standardized ** 3)
+        z_t_kurtosis = torch.mean(z_t_standardized ** 4)        
+        
+        print("Pre and Post noised values")
+        print(f"Key statistics: min var = {sde.sigma_min}, max var = {sde.sigma_max}, n. steps = {sde.N}")
+        print(f"Encoded images statistics: mean = {z0_mean}, std = {z0_std}, skew = {z0_skew}, kurtosis = {z0_kurtosis}")
+        print(f"Noised Encoded images statistics: mean = {z_t_mean}, std = {z_t_std}, skew = {z_t_skew}, kurtosis = {z_t_kurtosis}")
+
         return z_t, epsilon, std, sde
     
     def sample_reverse(self, configurations: dict, model: nn.Module, save_dir: str = "./samples"):

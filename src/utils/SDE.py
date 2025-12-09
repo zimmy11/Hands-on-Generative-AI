@@ -65,7 +65,7 @@ class VESDE:
         sigma = self.sigma_t(t)
         diffusion = sigma * torch.sqrt(torch.tensor(2 * (np.log(self.sigma_max) - np.log(self.sigma_min)),
                                                     device=t.device))
-        return diffusion_coeff
+        return diffusion
         
     def perturb_closed(self, x_0: torch.Tensor, t):
         mean, std = self.marginal_prob(x_0, t)
@@ -92,7 +92,7 @@ class VESDE:
         
         noise = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=gen)
         
-        dx = (- (diffusion_coeff[:, None, None, None] ** 2) * scores) * dt + diffusion_coeff * noise 
+        dx = (- (diffusion_coeff[:, None, None, None] ** 2) * scores) * dt + diffusion_coeff[:, None, None, None] * noise 
         
         x_ret = x + dx
         return x_ret

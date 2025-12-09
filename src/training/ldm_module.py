@@ -127,19 +127,19 @@ class LDMLightningModule(pl.LightningModule):
 
 
         # 6. Likelihood Weighting (λ(t) = g(t)^2)
-        g_squared_tensor = sde.get_g_squared(t)
-        print(f"5. [WEIGHTING] g(t)^2 shape: {g_squared_tensor.shape}, Stats: Min={g_squared_tensor.min().item():.4f}, Max={g_squared_tensor.max().item():.4f}, Mean={g_squared_tensor.mean().item():.4f}")
-        # Reshape for broadcasting (B, 1, 1, 1)
-        weighting_factor = g_squared_tensor[:, None, None, None] 
-        print(f"   Weighting factor shape (after unsqueeze): {weighting_factor.shape}")
-        weighting_factor = sde.get_alpha_original(t)**2
-        weighting_factor = weighting_factor[:, None, None, None]
+        # g_squared_tensor = sde.get_g_squared(t)
+        # print(f"5. [WEIGHTING] g(t)^2 shape: {g_squared_tensor.shape}, Stats: Min={g_squared_tensor.min().item():.4f}, Max={g_squared_tensor.max().item():.4f}, Mean={g_squared_tensor.mean().item():.4f}")
+        # # Reshape for broadcasting (B, 1, 1, 1)
+        # weighting_factor = g_squared_tensor[:, None, None, None] 
+        # print(f"   Weighting factor shape (after unsqueeze): {weighting_factor.shape}")
+        # weighting_factor = sde.get_alpha_original(t)**2
+        # weighting_factor = weighting_factor[:, None, None, None]
         #var_t = std**2
         #weighting_factor = g_squared_tensor[:, None, None, None]      
         #   
         # Total Weighted Loss (L(t) * g(t)^2)
-        weighted_loss = per_sample_loss * weighting_factor #* importance_weight
-        print(f"   Weighted loss shape (before reduction): {weighted_loss.shape}")
+        weighted_loss = per_sample_loss# * weighting_factor #* importance_weight
+        # print(f"   Weighted loss shape (before reduction): {weighted_loss.shape}")
         
         # Final batch loss (torch.mean over the batch)
         final_loss = torch.mean(weighted_loss)
