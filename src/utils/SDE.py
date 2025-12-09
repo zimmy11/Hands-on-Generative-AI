@@ -10,17 +10,17 @@ import math
 
 class VESDE:
     def __init__(self, sigma_min=0.01, sigma_max=50, N=1000):
-    """Construct a Variance Exploding SDE.
+        """Construct a Variance Exploding SDE.
 
-    Args:
-      sigma_min: smallest sigma.
-      sigma_max: largest sigma.
-      N: number of discretization steps
-    """
-    self.sigma_min = sigma_min
-    self.sigma_max = sigma_max
-    self.discrete_sigmas = torch.exp(torch.linspace(np.log(self.sigma_min), np.log(self.sigma_max), N))
-    self.N = N
+        Args:
+          sigma_min: smallest sigma.
+          sigma_max: largest sigma.
+          N: number of discretization steps
+        """
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
+        self.discrete_sigmas = torch.exp(torch.linspace(np.log(self.sigma_min), np.log(self.sigma_max), N))
+        self.N = N
 
     @property
     def T(self):

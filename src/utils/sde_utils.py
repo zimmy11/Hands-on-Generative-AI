@@ -1,6 +1,6 @@
 import torch
-from .subVP_SDE import subVP_SDE
-from .subVP_processes import DiffusionProcesses 
+from .SDE import VESDE
+from .SDE_processes import DiffusionProcesses 
 #from .subVP_forward import ForwardProcess
 
 def calculate_importance_sampling_probabilities(sde_model, N_timesteps, device):
