@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
 
+import time
+import torchvision.utils
+import matplotlib.pyplot as plt
+
 from src.utils.WIP_SDE import SDE, BetaScheduleSDE, SubVPSDE, VESDE
 
 
@@ -127,7 +131,9 @@ class Diffusion_Processes:
         # Initialize from the prior at time T
         x = self.sde.prior_sampling(shape).to(device)
 
-        k = num_steps//10
+        k = max(num_steps//10, 1)
+        start_time = time.time()
+        
         # Time discretization from T -> 0
         for i in reversed(range(num_steps)):
             t_i = torch.full((B,), T * i / num_steps, device=device)
@@ -143,7 +149,7 @@ class Diffusion_Processes:
             x = x + f + G_b * noise
 
             # ---- log stats + show images every 10% of steps ----
-            if (step % k == 0) or (i == 0):
+            if (i % k == 0) or (i == 0):
                 x_cpu = x.detach().cpu()
         
                 # discrete statistics
@@ -151,12 +157,14 @@ class Diffusion_Processes:
                 std = x_cpu.std().item()
                 x_min = x_cpu.min().item()
                 x_max = x_cpu.max().item()
-        
+
+                elapsed_time, start_time = time.time() - start_time, time.time()
                 print(
-                    f"[reverse step {step+1}/{num_steps} | i={i} | t={t_i[0].item():.4f}] "
-                    f"mean={mean:.4f}, std={std:.4f}, min={x_min:.4f}, max={x_max:.4f}"
+                    f"[reverse step {i+1}/{num_steps} | i={i} | t={t_i[0].item():.4f}]\n"
+                    f"mean={mean:.4f}, std={std:.4f}, min={x_min:.4f}, max={x_max:.4f}\n"
+                    f"Time of last {k} steps: {elapsed_time}. Time remaining {(k - i//10) * elapsed_time}.\n"
                 )
-        
+                
                 # visualize a few samples
                 # if model works in [-1, 1], map to [0, 1] for display
                 x_vis = x_cpu.clamp(-1.0, 1.0)
@@ -167,7 +175,7 @@ class Diffusion_Processes:
         
                 plt.figure(figsize=(4, 4))
                 plt.imshow(grid)
-                plt.title(f"Reverse step {step+1}/{num_steps}")
+                plt.title(f"Reverse step {i+1}/{num_steps}")
                 plt.axis("off")
                 plt.tight_layout()
                 plt.show()
