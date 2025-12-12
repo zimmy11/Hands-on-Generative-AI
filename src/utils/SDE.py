@@ -4,12 +4,12 @@ import torch
 import numpy as np
 from typing import Callable, Tuple
 import torch.nn as nn
-import math
+from math import sqrt
 #--------------------------------------------------
 
 
 class VESDE:
-    def __init__(self, sigma_min=0.01, sigma_max=50, N=1000):
+    def __init__(self, sigma_min=0.01, sigma_max=348, N=1000):
         """Construct a Variance Exploding SDE.
 
         Args:

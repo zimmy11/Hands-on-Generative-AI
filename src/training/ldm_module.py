@@ -75,6 +75,7 @@ class LDMLightningModule(pl.LightningModule):
                 print(f"  WARNING: Latent Variance is {var_lat:.4f}. Expected ~1.0. Check VAE Scale Factor!")
 
         batch_size = x_start_latents.shape[0]
+
         is_probabilities = None
         # 2. Sample time (t) using Importance Sampling (IS) or Uniform
         if is_probabilities is not None:
@@ -82,11 +83,11 @@ class LDMLightningModule(pl.LightningModule):
             print("Tensor Is Probabilities", is_probabilities)
             indices = torch.multinomial(is_probabilities, num_samples=batch_size, replacement=True)
             t = (indices.float() / self.n_timesteps).to(device)
-            probs_sampled = is_probabilities[indices]
-            print(f"   Selected Indices: {indices[:].tolist()}...") 
-            print(f" Indices shape: {indices.shape}")
-            print(f" Probs Sampled: {probs_sampled}")
-            print(f"   Probabilities of selected t: Min={probs_sampled.min():.2e}, Max={probs_sampled.max():.2e}")
+            # probs_sampled = is_probabilities[indices]
+            # print(f"   Selected Indices: {indices[:].tolist()}...") 
+            # print(f" Indices shape: {indices.shape}")
+            # print(f" Probs Sampled: {probs_sampled}")
+            # print(f"   Probabilities of selected t: Min={probs_sampled.min():.2e}, Max={probs_sampled.max():.2e}")
             # p_t = is_probabilities[indices].to(device)
             
             # # Importance Sampling Weight: 1 / (N * p(t))
@@ -96,16 +97,18 @@ class LDMLightningModule(pl.LightningModule):
         else: 
             # Uniform Sampling (Fallback/Plain Likelihood Weighting)
             t = torch.rand(batch_size, device=device)
-            print(f"t: {t} \n") 
+            #print(f"t: {t} \n") 
             #importance_weight = torch.ones(batch_size, device=device)
 
         # Call the corrected method (z0, t, noise)
-        x_t, epsilon_true, std, sde  = self.forward_process.run_forward(x_start_latents, configurations = self.cfg, is_times = t)
+        x_t, _, epsilon_true  = self.forward_process.forward_process(x_start_latents, t)
+        
         #print(f"2. [NOISING] Latents Shape: {x_t.shape} at t shape: {t.shape}")
         #print(f"   Epsilon True Shape: {epsilon_true.shape}, Std Shape: {std.shape}")
         print(f"   t Sampled: Min={t.min().item():.4f}, Max={t.max().item():.4f}")
         # 4. Network prediction (epsilon_pred)
-        epsilon_pred = self(x_t, t)
+        score_pred_scaled = self(x_t, t)
+        score_true_scaled = - epsilon_true
         #print(f"3. [PREDICTION] Epsilon Pred Shape: {epsilon_pred.shape}")
 
         # --- DEBUG 3: Prediction vs Target ---
@@ -121,7 +124,7 @@ class LDMLightningModule(pl.LightningModule):
             #     import pdb; pdb.set_trace() # Ferma tutto se c'è NaN
 
         # 5. Calculate Per-Sample Loss (MSE: ||epsilon_pred - epsilon_true||^2)
-        per_sample_loss = self.criterion(epsilon_pred, epsilon_true)
+        per_sample_loss = self.criterion(score_pred_scaled, score_true_scaled)
         print(f"4. [LOSS] Per-sample loss shape (before reduction): {per_sample_loss.shape}")
         print(f"   Per-sample loss stats: Min={per_sample_loss.min().item():.4f}, Max={per_sample_loss.max().item():.4f}, Mean={per_sample_loss.mean().item():.4f}")
 

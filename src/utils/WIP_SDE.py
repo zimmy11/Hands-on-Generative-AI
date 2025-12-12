@@ -135,12 +135,20 @@ class SDE(abc.ABC):
                 return drift, diffusion_rev
 
             def discretize(self, x, t):
+                # For VE SDE f is zero, so this is just G * z for SDE case.
                 f, G = discretize_fn(x, t)
                 score = score_fn(x, t)
                 factor = 0.5 if self.probability_flow else 1.0
                 G_sq = G[:, None, None, None] ** 2
                 rev_f = f - G_sq * score * factor
                 rev_G = torch.zeros_like(G) if self.probability_flow else G
+                
+                # print("probability_flow: ", self.probability_flow)
+                # print("drift: ", f)
+                # print("diffusion_rev: ", G)
+                # print("Reversed G: ", rev_G)
+                # print("Reversed f: ", rev_f[0][0][0][:5])
+                # print("score: ", score)
                 return rev_f, rev_G
 
         return RSDE()
@@ -277,11 +285,11 @@ class VPSDE(BetaScheduleSDE):
         mean = alpha_t[:, None, None, None] * x0
         return mean, std
 
-    def prior_sampling(self, shape):
+    def prior_sampling(self, shape, dtype = torch.float32):
         """
         Standard normal prior N(0, I) at time T.
         """
-        return torch.randn(*shape)
+        return torch.randn(*shape, dtype = dtype)
 
     def prior_logp(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -353,11 +361,11 @@ class SubVPSDE(BetaScheduleSDE):
         mean = alpha_t[:, None, None, None] * x0
         return mean, std
 
-    def prior_sampling(self, shape):
+    def prior_sampling(self, shape, dtype = torch.float32):
         """
         Standard normal prior N(0, I) at time T.
         """
-        return torch.randn(*shape)
+        return torch.randn(*shape, dtype = dtype)
 
     def prior_logp(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -445,11 +453,11 @@ class VESDE(SDE):
         mean = x0
         return mean, std
 
-    def prior_sampling(self, shape):
+    def prior_sampling(self, shape, dtype = torch.float32):
         """
         Gaussian prior with variance σ_max^2.
         """
-        return torch.randn(*shape) * self.sigma_max
+        return torch.randn(*shape, dtype = dtype) * self.sigma_max
 
     def prior_logp(self, z: torch.Tensor) -> torch.Tensor:
         """

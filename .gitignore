@@ -1,7 +1,10 @@
 data/
 
 checkpoints/interim/
+checkpoints/weights/
 
+
+images/
 wandb/
 
 # Ignore Python cache files

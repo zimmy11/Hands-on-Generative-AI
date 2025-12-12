@@ -21,7 +21,7 @@ from src.training.ldm_module import LDMLightningModule # Your PL module core
 from google.cloud import storage
 import numpy as np
 from torchvision.datasets import CelebA
-from torchvision import datasets, transforms
+from torchvision import transforms
 
 
 # --- SETUP FUNCTION ---
@@ -46,19 +46,12 @@ def setup(cfg, data_path: str, device: torch.device):
     
     try:
 
-        # Load the full dataset (assuming raw images are present in the directory)
-        # if data_path.startswith("gs://"):
-        #     local_data_path = "/tmp/train_data"
-        #     download_gcs_folder(data_path, local_data_path)
-        #     data_path = local_data_path
-
-
         #full_dataset = LatentDataset(data_dir=data_path, image_size=forward_cfg['image_size'])
         image_size = forward_cfg['image_size']
         transform = transforms.Compose([transforms.CenterCrop(178), transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize([0.5]*3, [0.5]*3)])
 
-        full_dataset = datasets.CelebA(
-            root="../data",
+        full_dataset = CelebA(
+            root="./data",
             # root = data_path
             split="train",
             target_type="attr",
@@ -66,19 +59,19 @@ def setup(cfg, data_path: str, device: torch.device):
             download=False   
         )
 
-        indices = [0]  # Example indices for a small subset
+        indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  # Example indices for a small subset
         full_dataset = torch.utils.data.Subset(full_dataset, indices)
         # Define split sizes
-        # val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
-        # train_size = len(full_dataset) - val_size
+        val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
+        train_size = len(full_dataset) - val_size
         
         # Deterministic Split for reproducibility
-        # torch.manual_seed(forward_cfg['seed'])
-        # train_dataset, val_dataset = random_split(
-        #     full_dataset, [train_size, val_size]
-        # )
-        train_dataset = full_dataset
-        val_dataset = full_dataset
+        torch.manual_seed(forward_cfg['seed'])
+        train_dataset, val_dataset = random_split(
+            full_dataset, [train_size, val_size]
+        )
+        # train_dataset = full_dataset
+        # val_dataset = full_dataset
         # Create DataLoaders
 
 
@@ -97,7 +90,7 @@ def setup(cfg, data_path: str, device: torch.device):
     vae_encoder_func, vae_decoder_func = get_vae_encoder_func(device) # VAE Encoder function
     
     # Initialize ForwardProcess (contains the subVP_SDE instance)
-    forward_process = DiffusionProcesses(cfg)
+    forward_process = Diffusion_Processes(forward_cfg)
     sde = VESDE()
 
     # C. Importance Sampling Calculation (IS)
@@ -227,6 +220,7 @@ def main():
     parser.add_argument('--self-attention', type=bool)
     parser.add_argument('--num-workers', type=int)
     parser.add_argument('--early-stopping-patience', type=int)
+    parser.add_argument('--sde_type', type=str)
 
     args = parser.parse_args()
 
@@ -288,7 +282,7 @@ def main():
     final      = get_param('final', args.final)
     eps        = get_param('eps', args.eps)
     closed_formula = get_param('closed_formula', args.closed_formula)
-
+    sde_type    = get_param('sde_type', args.sde_type)
     t_0        = get_param('t_0', args.t0)
     t_1        = get_param('t_1', args.t1)
     corrector  = get_param('corrector', args.corrector)
@@ -328,6 +322,7 @@ def main():
             'eps': eps,
             'closed_formula': closed_formula,
             'seed': seed,
+            'sde_type': sde_type,
             
             # SDE Parameters from YAML
             'beta_min': beta_min,
@@ -367,6 +362,7 @@ def main():
             'n_corr': n_corr,
             'target_snr': target_snr,
             'rev_type': rev_type,
+            'sde_type': sde_type,
 
             # Shared Parameters from YAML
             'beta_min': beta_min,
@@ -526,9 +522,10 @@ def main():
    
 
     # 8. Initialize Trainer (Optimized for T4/GCP Cost Saving)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     trainer = Trainer(
         logger=wandb_logger,
-        accelerator="cpu",
+        accelerator=device,
         devices="auto",                      # Use 1 T4 GPU
         max_epochs=epochs,
         # precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
