@@ -1,9 +1,9 @@
 # /configs/config.yaml
 
 # --- STOCHASTIC PROCESSES PARAMETERS
-# beta_min: 0.1         # Beta schedule minimum (beta_0)
-# beta_max: 20.0        # Beta schedule maximum (beta_1)
-n_timesteps: 2000      # N value for the diffusion schedule (T=1.0)
+beta_min: 0.1         # Beta schedule minimum (beta_0)
+beta_max: 20.0        # Beta schedule maximum (beta_1)
+n_timesteps: 1000      # N value for the diffusion schedule (T=1.0)
 schedule: 'linear'
 seed: 42
 
@@ -21,12 +21,12 @@ corrector: False
 n_corr: 50
 target_snr: 0.16
 rev_type: 'sde'
-sde_type: 've'
+sde_type: 'subVP'
 
 # --- TRAINING HYPERPARAMETERS (Phase 2: Unconditional LDM) ---
 epochs: 50
-learning_rate: 0.001
-batch_size: 16
+learning_rate: 0.0005
+batch_size: 2
 model: 'LDM'  # Model type: 'ldm' for Latent Diffusion Model
 # --- SDE/DIFFUSION SCHEDULE PARAMETERS (subVP SDE) ---
 use_importance_sampling: False # Set to True to use g(t)^2 / lambda_orig(t) sampling

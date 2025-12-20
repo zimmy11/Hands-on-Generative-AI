@@ -11,11 +11,9 @@ from src.utils.WIP_SDE import SDE, BetaScheduleSDE, SubVPSDE, VESDE, VPSDE
 def _expand_batch_vector_to(x: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
     """
     Expand a (B,) vector to match the shape of x (B, C, H, W, ...).
-
     Args:
         x: tensor of shape (B, ...)
         vec: tensor of shape (B,)
-
     Returns:
         tensor of shape (B, 1, 1, 1, ...) broadcastable with x
     """
@@ -42,14 +40,10 @@ class Diffusion_Processes:
     def forward_process(self, z0: torch.Tensor, t: torch.Tensor = None):
         """
         Forward diffusion: add noise to clean data z0 according to the chosen SDE.
-
         This uses the closed-form marginal p_t(z | z0):
-
             z_t = mean(z0, t) + std(t) * eps,  eps ~ N(0, I)
-
         Args:
             z0: clean data, shape (B, C, H, W) or similar.
-
         Returns:
             z_t: noised data at random time t, same shape as z0
             t:  time vector, shape (B,)
@@ -82,25 +76,21 @@ class Diffusion_Processes:
         shape,
         num_steps: int = None,
         probability_flow: bool = False,
-        device: torch.device = 'cpu'
+        device: torch.device = None
     ):
         """
         Reverse diffusion: sample from the data distribution using the learned model.
-
         This integrates the reverse-time SDE/ODE defined by self.sde.reverse().
-
         Assumptions:
             - model(x, t) returns the score ∇_x log p_t(x) (Song-style score model).
               If your model predicts noise ε instead, you must wrap it and convert
               to a score before passing it here.
-
         Args:
             model: neural net implementing score(x, t).
             shape: shape of the samples to generate, e.g. (B, C, H, W).
             num_steps: number of reverse-time discretization steps (default: self.N).
             probability_flow: if True, use probability flow ODE (deterministic);
                               if False, use reverse SDE (stochastic).
-
         Returns:
             x: generated samples, tensor of shape `shape`.
         """
@@ -119,47 +109,66 @@ class Diffusion_Processes:
         #next(model.parameters()).device
         B = shape[0]
         T = self.sde.T
+        print(f"This is our SDE: {self.sde}")
+        print(f"This is the value of T: {T}")
 
-        # Define the score function using the model.
+
         def score_fn(x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-            # t is (B,) – pass as is; adapt if your model expects a different format.
-            model_out = model(x, t)
+            """
+            Computes the score using the pre-trained model.
+            Handles the mapping from continuous SDE time t to model-specific inputs.
+            """
+            # 1. Get the marginal std (sigma) from the SDE
+            #    std shape: (B,)
             _, std = self.sde.marginal_prob(x, t)
+            model_input_t = t
 
-            # 3. FONDAMENTALE: Dividi per std per ottenere lo Score puro
-            # Aggiungiamo 1e-6 per evitare divisioni per zero
-            score = model_out / (std[:, None, None, None] + 1e-6)
+            # 3. Forward Pass
+            # .sample is REQUIRED because diffusers models return an output object
+            model_out = model(x, model_input_t)
+
+            # 4. Convert Output to Score
+            # Reshape std for broadcasting: (B, 1, 1, 1)
+            std = std.view(*std.shape, *([1] * (x.dim() - 1)))
             
+            if self.sde_type == "ve":
+                # VE: Model predicts score * sigma (approx).
+                # score = output / sigma
+                score = model_out / (std + 1e-6)
+            else:
+                # VP: Model predicts noise (epsilon).
+                # score = -epsilon / sigma
+                score = -model_out / (std + 1e-6)
+
             return score
-            
-            
+
         # Build reverse-time SDE/ODE
         rsde: SDE = self.sde.reverse(score_fn, probability_flow=probability_flow)
 
         # Initialize from the prior at time T
         x = self.sde.prior_sampling(shape).to(device)
-        #print("x0: ", x)
+        print(f"Check prior {self.sde_type}: Mean = {x.mean()}, Std = {x.std()}")
 
         k = max(num_steps//10, 1)
         start_time = time.time()
-        min_step = 3
+        
         # Time discretization from T -> 0
-        for i in reversed(range(min_step, num_steps)):
+        for i in reversed(range(num_steps)):
             t_i = torch.full((B,), T * i / num_steps, device=device)
             f, G = rsde.discretize(x, t_i)  # f: (B, ...), G: (B,)
-            #print("T_i: ", t_i)
+
             G_b = _expand_batch_vector_to(x, G)
 
             if probability_flow or i == 0:
                 noise = 0.0
             else:
                 noise = torch.randn_like(x)
-            # print("Noise: ", noise[0][0][0][:5])
-            # print("Value of Update: ", (-f + G_b * noise)[0][0][0][:5])
+
             x = x - f + G_b * noise
 
+
             # ---- log stats + show images every 10% of steps ----
-            if (i % k == 0 ) or (i == min_step):
+            if (i % k == 0) or (i < 15):
                 x_cpu = x.detach().cpu()
         
                 # discrete statistics
@@ -170,7 +179,7 @@ class Diffusion_Processes:
 
                 elapsed_time, start_time = time.time() - start_time, time.time()
                 print(
-                    f"[reverse step {i}/{num_steps} | i={i} | t={t_i[0].item():.4f}]\n"
+                    f"[reverse step {i+1}/{num_steps} | i={i} | t={t_i[0].item():.4f}]\n"
                     f"mean={mean:.4f}, std={std:.4f}, min={x_min:.4f}, max={x_max:.4f}\n"
                     f"Time of last {k} steps: {elapsed_time}. Time remaining {(k - i//10) * elapsed_time}.\n"
                 )
@@ -185,7 +194,7 @@ class Diffusion_Processes:
         
                 plt.figure(figsize=(4, 4))
                 plt.imshow(grid)
-                plt.title(f"Reverse step {i}/{num_steps}")
+                plt.title(f"Reverse step {i+1}/{num_steps}")
                 plt.axis("off")
                 plt.tight_layout()
                 plt.show()

@@ -1,0 +1,156 @@
+import torch.nn as nn
+import torch
+from .components import ResBlock, SinusoidalPositionEmbeddings
+
+class UNet(nn.Module):
+    def __init__(self, 
+                 in_channels=4, 
+                 model_channels=32, 
+                 out_channels=4, 
+                 channel_mults=(1, 2, 4, 8),
+                 attn_resolutions=(16,), # Risoluzioni dove applicare Attenzione
+                 num_res_blocks=2,
+                 dropout=0.0):
+        super().__init__()
+        
+        self.model_channels = model_channels
+        self.time_embed_dim = model_channels * 4
+        
+        # 1. Time Embedding
+        self.time_mlp = nn.Sequential(
+            SinusoidalPositionEmbeddings(model_channels),
+            nn.Linear(model_channels, self.time_embed_dim),
+            nn.SiLU(),
+            nn.Linear(self.time_embed_dim, self.time_embed_dim),
+        )
+        
+        # 2. Input Convolution
+        self.input_conv = nn.Conv2d(in_channels, model_channels, kernel_size=3, padding=1)
+        
+        # 3. Downsampling (Encoder)
+        self.down_blocks = nn.ModuleList()
+        current_channels = model_channels
+        # Skip connections storage logic
+        self.skips_config = [model_channels] 
+        
+        # Risoluzione iniziale fittizia (assumendo input 64x64 o simile)
+        # Per semplicità, decidiamo l'attenzione basandoci sui livelli
+        
+        ds = 1
+        for level, mult in enumerate(channel_mults):
+            out_ch = model_channels * mult
+            for _ in range(num_res_blocks):
+                # Check se serve attenzione a questo livello (logica semplificata basata sui canali o risoluzione)
+                # In Song et al, l'attenzione è spesso a 16x16. 
+                # Se l'input è 32x32: Level 0 (32), Level 1 (16) -> Attn qui, Level 2 (8).
+                is_attn = (ds in [2, 4]) # Esempio: applica attn dopo 1 o 2 downsamples
+                # Nota: Per precisione assoluta, dovremmo tracciare la risoluzione attuale (H, W).
+                # Qui attivo l'attenzione sull'ultimo blocco se 'mult' è alto, stile DDPM.
+                is_attn = (level >= len(channel_mults) - 2) # Attenzione sugli strati profondi (bassa ris)
+                
+                self.down_blocks.append(ResBlock(
+                    in_channels=current_channels,
+                    out_channels=out_ch,
+                    time_embed_dim=self.time_embed_dim,
+                    use_attention=is_attn,
+                    dropout=dropout
+                ))
+                current_channels = out_ch
+                self.skips_config.append(current_channels)
+                
+            # Downsample (eccetto ultimo livello)
+            if level != len(channel_mults) - 1:
+                self.down_blocks.append(nn.Conv2d(current_channels, current_channels, 3, stride=2, padding=1))
+                self.skips_config.append(current_channels)
+                ds *= 2
+
+        # 4. Bottleneck (Mid Block)
+        self.mid_block1 = ResBlock(current_channels, current_channels, self.time_embed_dim, use_attention=True, dropout=dropout)
+        self.mid_block2 = ResBlock(current_channels, current_channels, self.time_embed_dim, use_attention=False, dropout=dropout)
+        
+        # 5. Upsampling (Decoder)
+        self.up_blocks = nn.ModuleList()
+        # Invertiamo i channel mults per risalire
+        reversed_mults = list(reversed(channel_mults))
+        
+        for level, mult in enumerate(reversed_mults):
+            out_ch = model_channels * mult
+            
+            # Upsample block (ResBlocks + Upsample layer)
+            # In DDPM, per ogni livello di down ci sono solitamente 'num_res_blocks' + 1 nel decoder
+            # a causa della concatenazione degli skip.
+            
+            for _ in range(num_res_blocks + 1):
+                # Recuperiamo canali skip
+                skip_ch = self.skips_config.pop()
+                
+                is_attn = (level <= 1) # Attenzione sugli strati profondi (bassa ris)
+                
+                # Input channels = current + skip
+                self.up_blocks.append(ResBlock(
+                    in_channels=current_channels + skip_ch,
+                    out_channels=out_ch,
+                    time_embed_dim=self.time_embed_dim,
+                    use_attention=is_attn,
+                    dropout=dropout
+                ))
+                current_channels = out_ch
+                
+            # Upsample (eccetto ultimo livello)
+            if level != len(channel_mults) - 1:
+                self.up_blocks.append(nn.Upsample(scale_factor=2, mode='nearest'))
+                ds //= 2
+
+        # 6. Final Output
+        self.out_norm = nn.GroupNorm(8, current_channels)
+        self.out_act = nn.SiLU()
+        self.out_conv = nn.Conv2d(current_channels, out_channels, kernel_size=3, padding=1)
+
+    def forward(self, x, t):
+        # Time Embedding
+        t_emb = self.time_mlp(t)
+        
+        # Initial Conv
+        x = self.input_conv(x)
+        
+        # Store Skips
+        skips = [x]
+        
+        # --- Encoder ---
+        for layer in self.down_blocks:
+            if isinstance(layer, ResBlock):
+                x = layer(x, t_emb)
+                skips.append(x)
+            else: # Downsample Conv
+                x = layer(x)
+                skips.append(x)
+        
+        #print(f"Bottleneck In: {x.shape}")
+        
+        # --- Bottleneck ---
+        x = self.mid_block1(x, t_emb)
+        x = self.mid_block2(x, t_emb)
+        
+        #print(f"Bottleneck Out: {x.shape}")
+        
+        # --- Decoder ---
+        for layer in self.up_blocks:
+            if isinstance(layer, ResBlock):
+                # Recupera skip
+                skip = skips.pop()
+                
+                # Check dimension mismatch (può capitare con input non potenze di 2)
+                if x.shape[-2:] != skip.shape[-2:]:
+                    x = F.interpolate(x, size=skip.shape[-2:], mode='bilinear', align_corners=False)
+                
+                x = torch.cat([x, skip], dim=1)
+                x = layer(x, t_emb)
+            else: # Upsample
+                x = layer(x)
+        
+        # Final
+        x = self.out_norm(x)
+        x = self.out_act(x)
+        x = self.out_conv(x)
+        
+        return x

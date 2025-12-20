@@ -5,7 +5,7 @@ import pytorch_lightning as pl
 from torch import nn
 from typing import Optional
 from src.utils.sde_utils import *
-import os
+import torch.nn.functional as F
 
 
 #from src.models.unet_model import UNet
@@ -24,7 +24,7 @@ class LDMLightningModule(pl.LightningModule):
         # Models and Components
         self.unet = unet_model
         self.forward_process = forward_process # Instance of ForwardProcess
-        self.criterion = nn.MSELoss(reduction='none') # Loss must be 'none' for per-sample weighting
+        self.criterion = nn.MSELoss(reduction = 'none') # Loss must be 'none' for per-sample weighting
         
         # VAE Encoder Function (defined in vae_utils)
         self.encode_latents = vae_encoder
@@ -36,6 +36,8 @@ class LDMLightningModule(pl.LightningModule):
         self.vae_scale_factor = hparams['vae_scale_factor']
         self.n_timesteps = hparams['n_timesteps'] # N for IS calculation
         self.cfg = cfg 
+        self.eps = float(cfg['ForwardConfig']['eps'])
+
 
 
     def forward(self, x_t, t):
@@ -56,13 +58,13 @@ class LDMLightningModule(pl.LightningModule):
 
 
         # 1. Encode Data (x_0) and Apply VAE Scale Factor
-        x_start_pixels, labels = batch # Assumes Dataloader yields pixel tensor
+        x_start_latents, labels = batch # Assumes Dataloader yields pixel tensor
         
-        #print(f"1. [INPUT] Pixels Shape: {x_start_pixels.shape}")
+        #print(f"1. [INPUT] Pixels Shape: {x_start_latents.shape}")
 
         with torch.no_grad():
 
-            x_start_latents = self.encode_latents(x_start_pixels) * self.vae_scale_factor
+            x_start_latents = self.encode_latents(x_start_latents) * self.vae_scale_factor
 
         #print(f"1. [INPUT] Pixels Shape after encoding: {x_start_latents.shape}")
 
@@ -71,18 +73,20 @@ class LDMLightningModule(pl.LightningModule):
             var_lat = x_start_latents.var()
             mean_lat = x_start_latents.mean()
             #print(f"  Latents (scaled): Mean={mean_lat:.4f}, Var={var_lat:.4f}")
-            if var_lat < 0.5 or var_lat > 2.0:
-                print(f"  WARNING: Latent Variance is {var_lat:.4f}. Expected ~1.0. Check VAE Scale Factor!")
+            # if var_lat < 0.5 or var_lat > 2.0:
+            #     print(f"  WARNING: Latent Variance is {var_lat:.4f}. Expected ~1.0. Check VAE Scale Factor!")
 
         batch_size = x_start_latents.shape[0]
+
 
         is_probabilities = None
         # 2. Sample time (t) using Importance Sampling (IS) or Uniform
         if is_probabilities is not None:
             # Importance Sampling (using the pre-calculated tensor)
-            print("Tensor Is Probabilities", is_probabilities)
+            #print("Tensor Is Probabilities", is_probabilities)
             indices = torch.multinomial(is_probabilities, num_samples=batch_size, replacement=True)
             t = (indices.float() / self.n_timesteps).to(device)
+            t = t.clamp(min=self.eps)
             # probs_sampled = is_probabilities[indices]
             # print(f"   Selected Indices: {indices[:].tolist()}...") 
             # print(f" Indices shape: {indices.shape}")
@@ -96,19 +100,19 @@ class LDMLightningModule(pl.LightningModule):
             # importance_weight = importance_weight[:, None, None, None]
         else: 
             # Uniform Sampling (Fallback/Plain Likelihood Weighting)
-            t = torch.rand(batch_size, device=device)
+           
+            t = torch.rand(batch_size, device=device) * (1. - self.eps) + self.eps
             #print(f"t: {t} \n") 
             #importance_weight = torch.ones(batch_size, device=device)
 
         # Call the corrected method (z0, t, noise)
         x_t, _, epsilon_true  = self.forward_process.forward_process(x_start_latents, t)
-        
-        #print(f"2. [NOISING] Latents Shape: {x_t.shape} at t shape: {t.shape}")
+        # print(f"2. [NOISING] Latents Shape: {x_t.shape} at t shape: {t.shape}")
         #print(f"   Epsilon True Shape: {epsilon_true.shape}, Std Shape: {std.shape}")
-        print(f"   t Sampled: Min={t.min().item():.4f}, Max={t.max().item():.4f}")
+        #print(f"   t Sampled: Min={t.min().item():.4f}, Max={t.max().item():.4f}")
         # 4. Network prediction (epsilon_pred)
-        score_pred_scaled = self(x_t, t)
-        score_true_scaled = - epsilon_true
+        epsilon_pred = self(x_t, t)
+        #score_true_scaled = - epsilon_true
         #print(f"3. [PREDICTION] Epsilon Pred Shape: {epsilon_pred.shape}")
 
         # --- DEBUG 3: Prediction vs Target ---
@@ -124,9 +128,9 @@ class LDMLightningModule(pl.LightningModule):
             #     import pdb; pdb.set_trace() # Ferma tutto se c'è NaN
 
         # 5. Calculate Per-Sample Loss (MSE: ||epsilon_pred - epsilon_true||^2)
-        per_sample_loss = self.criterion(score_pred_scaled, score_true_scaled)
-        print(f"4. [LOSS] Per-sample loss shape (before reduction): {per_sample_loss.shape}")
-        print(f"   Per-sample loss stats: Min={per_sample_loss.min().item():.4f}, Max={per_sample_loss.max().item():.4f}, Mean={per_sample_loss.mean().item():.4f}")
+        per_sample_loss = self.criterion(epsilon_pred, epsilon_true)
+        #print(f"4. [LOSS] Per-sample loss shape (before reduction): {per_sample_loss.shape}")
+        #print(f"   Per-sample loss stats: Min={per_sample_loss.min().item():.4f}, Max={per_sample_loss.max().item():.4f}, Mean={per_sample_loss.mean().item():.4f}")
 
 
         # 6. Likelihood Weighting (λ(t) = g(t)^2)
@@ -146,7 +150,7 @@ class LDMLightningModule(pl.LightningModule):
         
         # Final batch loss (torch.mean over the batch)
         final_loss = torch.mean(weighted_loss)
-        print(f"   Final loss (after mean): {final_loss.item():.6f}")
+        #print(f"   Final loss (after mean): {final_loss.item():.6f}")
         
         return final_loss, final_loss.detach() # Return loss and detached value for logging
 
@@ -165,7 +169,7 @@ class LDMLightningModule(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(), lr=self.lr)
+        return torch.optim.Adam(self.parameters(), lr=self.lr)
     
 
     # def on_train_epoch_end(self):

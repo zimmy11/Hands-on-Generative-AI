@@ -6,159 +6,14 @@ import torch
 from torch.utils.data import DataLoader, random_split
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
-from src.utils.DelayedEarlyStopping import DelayedEarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 import wandb
 import re
 from datetime import datetime
 # Import all core components from your structured project modules
-from src.models.unet_model import UNet  # Your custom UNet model
 from src.utils.sde_utils import * 
 # from src.utils.subVP_forward import ForwardProcess   # Forward process with subVP_SDE
-from src.utils.vae_utils import get_vae_encoder_func # Function to load and return the VAE encoder
-from src.data.base_dataset import LatentDataset       # Your custom Dataset class
-from src.training.ldm_module import LDMLightningModule # Your PL module core
-from google.cloud import storage
-import numpy as np
-from torchvision.datasets import CelebA
-from torchvision import transforms
-
-
-# --- SETUP FUNCTION ---
-def setup(cfg, data_path: str, device: torch.device):
-    """
-    Sets up all model components, data loaders, and calculates the IS tensor.
-    
-    Args:
-        cfg (dict): Configuration dictionary loaded from YAML.
-        data_path (str): Path to the dataset (local path or GCS path for Dataloader).
-        device (torch.device): Target device ('cuda' or 'cpu').
-        
-    Returns:
-        tuple: (ldm_module, train_loader, val_loader)
-    """
-    
-    print(f"1. Initializing setup on {device}...")
-
-    # A. Data Loading & Splitting
-
-    forward_cfg = cfg['ForwardConfig']
-    
-    try:
-
-        #full_dataset = LatentDataset(data_dir=data_path, image_size=forward_cfg['image_size'])
-        image_size = forward_cfg['image_size']
-        transform = transforms.Compose([transforms.CenterCrop(178), transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize([0.5]*3, [0.5]*3)])
-
-        full_dataset = CelebA(
-            root="./data",
-            # root = data_path
-            split="train",
-            target_type="attr",
-            transform=transform,
-            download=False   
-        )
-
-        indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  # Example indices for a small subset
-        full_dataset = torch.utils.data.Subset(full_dataset, indices)
-        # Define split sizes
-        val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
-        train_size = len(full_dataset) - val_size
-        
-        # Deterministic Split for reproducibility
-        torch.manual_seed(forward_cfg['seed'])
-        train_dataset, val_dataset = random_split(
-            full_dataset, [train_size, val_size]
-        )
-        # train_dataset = full_dataset
-        # val_dataset = full_dataset
-        # Create DataLoaders
-
-
-        train_loader = DataLoader(train_dataset, batch_size=forward_cfg['batch_size'], shuffle=True, num_workers=forward_cfg['num_workers'])# CHange Batch size
-        val_loader = DataLoader(val_dataset, batch_size=forward_cfg['batch_size'], shuffle=True, num_workers=forward_cfg['num_workers']) # Change Batch size
-
-        print(f"Dataset loaded: Total {len(full_dataset)} images.")
-        print(f" -> Train Loader: {len(train_dataset)} images.")
-
-    except Exception as e:
-        print(f"ERROR: Could not load data from {data_path}. Check path and dataset class. {e}")
-        sys.exit(1)
-
-    # B. Model and Diffusion Setup
-    unet_model = UNet(in_channels=forward_cfg['latent_channels'], out_channels=forward_cfg['latent_channels'], features=forward_cfg['features'], ).to(device)
-    vae_encoder_func, vae_decoder_func = get_vae_encoder_func(device) # VAE Encoder function
-    
-    # Initialize ForwardProcess (contains the subVP_SDE instance)
-    forward_process = Diffusion_Processes(forward_cfg)
-    sde = VESDE()
-
-    # C. Importance Sampling Calculation (IS)
-    is_probabilities = None
-    if forward_cfg['use_importance_sampling']:
-        print("2. Calculating Importance Sampling probabilities (g(t)^2 / lambda_orig(t))...")
-        # forward_process.sde_model is the subVP_SDE instance required for calculation
-        is_probabilities = calculate_importance_sampling_probabilities(
-            sde, 
-            forward_cfg['N'], 
-            device
-        )
-    else:
-        is_probabilities = torch.ones(forward_cfg['N'], device=device) / forward_cfg['N']
-
-    # D. Prepare Hparams for PL Module & Early Stopping
-    hparams = {
-        'learning_rate': forward_cfg['learning_rate'],
-        'vae_scale_factor': forward_cfg['vae_scale_factor'],
-        'n_timesteps': forward_cfg['N'],
-        'is_probabilities': is_probabilities, # Pass the IS tensor through hparams for access in training_step
-        'batch_size': forward_cfg['batch_size'],
-        'data_path': data_path
-    }
-
-
-
-    # E. Instantiate Lightning Module
-    ldm_module = LDMLightningModule(
-        unet_model=unet_model, 
-        forward_process=forward_process, 
-        vae_encoder=vae_encoder_func, 
-        vae_decoder=vae_decoder_func,
-        hparams=hparams, 
-        cfg = cfg
-    )
-    
-    return ldm_module, train_loader, val_loader
-
-# --- GCS Utility Function --- 
-# Downloads a folder from GCS to local path
-def download_gcs_folder(bucket_path, local_path):
-    client = storage.Client()
-    bucket_name, prefix = bucket_path.replace("gs://", "").split("/", 1)
-    bucket = client.bucket(bucket_name)
-    blobs = bucket.list_blobs(prefix=prefix)
-    os.makedirs(local_path, exist_ok=True)
-    for blob in blobs:
-        dest_path = os.path.join(local_path, os.path.relpath(blob.name, prefix))
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-        blob.download_to_filename(dest_path)
-
-
-def download_gcs_file(gcs_path: str, local_dir: str) -> str:
-    """
-    Scarica un singolo file da GCS e ritorna il path locale.
-    gcs_path: gs://bucket/.../file.ext
-    local_dir: directory locale dove salvare
-    """
-    client = storage.Client()
-    path = gcs_path.replace("gs://", "")
-    bucket_name, blob_path = path.split("/", 1)
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(blob_path)
-    os.makedirs(local_dir, exist_ok=True)
-    local_filename = os.path.join(local_dir, os.path.basename(blob_path))
-    blob.download_to_filename(local_filename)
-    return local_filename
+from src.utils.utils import setup
 
 
 
@@ -178,7 +33,7 @@ def extract_epoch_from_filename(ckpt_filename: str) -> int:
 # --- MAIN EXECUTION FUNCTION ---
 def main():
 
-    wandb.login(key="3f785a5ef6c94fac05a13ed4a58965545976c05b")
+    #wandb.login(key="3f785a5ef6c94fac05a13ed4a58965545976c05b")
     # 1. Argument Parsing (Used for GCP Vertex AI Custom Job configuration)
     parser = argparse.ArgumentParser(description="PyTorch Lightning LDM Training")
     parser.add_argument('--data-path', type=str, required=True, help='Path to the dataset directory (GCS for cloud training).')
@@ -233,16 +88,8 @@ def main():
     
     print(f"Loading configuration from: {args.config_path}")
     config_path = args.config_path
-    if config_path.startswith("gs://"):
-        client = storage.Client()
-        bucket_name, blob_path = config_path.replace("gs://", "").split("/", 1)
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(blob_path)
-        yaml_bytes = blob.download_as_bytes()
-        yaml_config = yaml.safe_load(yaml_bytes)
-    else:
-        with open(config_path, 'r') as f:
-            yaml_config = yaml.safe_load(f)
+    with open(config_path, 'r') as f:
+        yaml_config = yaml.safe_load(f)
 
     resume_ckpt_cli = args.resume_checkpoint
     resume_ckpt_local = None
@@ -250,23 +97,11 @@ def main():
 
     if resume_ckpt_cli:
         print(f"[INFO] resume-checkpoint provided: {resume_ckpt_cli}")
-        # se è un path GCS, lo scarichiamo in /tmp
-        if resume_ckpt_cli.startswith("gs://"):
-            try:
-                tmp_dir = "/tmp/checkpoints"
-                print(f"[INFO] downloading checkpoint from GCS to {tmp_dir} ...")
-                resume_ckpt_local = download_gcs_file(resume_ckpt_cli, tmp_dir)
-                _downloaded_tmp_ckpt = resume_ckpt_local
-                print(f"[INFO] checkpoint downloaded to {resume_ckpt_local}")
-            except Exception as e:
-                print(f"[ERROR] could not download checkpoint from {resume_ckpt_cli}: {e}")
-                sys.exit(1)
-        else:
-            # local path: usalo direttamente (su Vertex AI questo sarà tipicamente un percorso già disponibile)
-            if not os.path.exists(resume_ckpt_cli):
-                print(f"[ERROR] resume checkpoint not found at local path: {resume_ckpt_cli}")
-                sys.exit(1)
-            resume_ckpt_local = resume_ckpt_cli
+
+        if not os.path.exists(resume_ckpt_cli):
+            print(f"[ERROR] resume checkpoint not found at local path: {resume_ckpt_cli}")
+            sys.exit(1)
+        resume_ckpt_local = resume_ckpt_cli
 
 
     def get_param(key, cli_value):
@@ -442,7 +277,7 @@ def main():
         #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
         #log_model="all")
     
-    wandb_logger.experiment.log({"config_forward": cfg["ForwardConfig"]})
+    # wandb_logger.experiment.log({"config_forward": cfg["ForwardConfig"]})
 
     # 6. Checkpoint Callback (Saves model states)
     # AIP_MODEL_DIR is the standard Vertex AI output path (e.g., gs://bucket/output_ldm_pl/)
@@ -461,19 +296,6 @@ def main():
         save_last=False
         #save_on_train_epoch_end=True
     )
-
-
-    patience = cfg['ForwardConfig']['early_stopping_patience'] or 15
-
-    # early_stopping = DelayedEarlyStopping(
-    #     start_epoch=50, 
-    #     monitor='val_loss',
-    #     patience=patience,
-    #     mode='min',
-    #     verbose=True
-    # )
-
-
 
     # 7. Start Training
     print("Starting LDM Training...")
@@ -500,7 +322,6 @@ def main():
                     print("[INFO] Detected Lightning checkpoint — will resume via trainer.ckpt_path")
                     ckpt_path_for_trainer = resume_ckpt_local
                 else:
-                    # Altrimenti, assumiamo sia uno state_dict puro (mapping nome->tensor)
                     try:
                         ldm_module.load_state_dict(ckpt_dict, strict=False)
                         print("[INFO] Loaded checkpoint as model state_dict.")
@@ -522,20 +343,30 @@ def main():
    
 
     # 8. Initialize Trainer (Optimized for T4/GCP Cost Saving)
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     trainer = Trainer(
         logger=wandb_logger,
-        accelerator=device,
+        accelerator='cuda',
         devices="auto",                      # Use 1 T4 GPU
         max_epochs=epochs,
         # precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback], #, early_stopping],
-        limit_train_batches=1, 
-        limit_val_batches=1 # --> we use it to test the code quickly
+        limit_train_batches=1.0, 
+        limit_val_batches=1.0 # --> we use it to test the code quickly
     )
 
     trainer.fit(ldm_module, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
+#     study = optuna.create_study(
+#     direction="minimize",
+#     sampler=optuna.samplers.TPESampler(),
+#     pruner=optuna.pruners.MedianPruner(n_warmup_steps=2)
+# )
+
+#     study.optimize(make_objective(cfg), n_trials=10)
+#     print("BEST TRIAL:")
+#     print(study.best_trial.value)
+#     print(study.best_trial.params)
+        
     # 9. Cleanup
     wandb.finish()
 
@@ -543,7 +374,7 @@ def main():
 
 
     current_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")        
-    actual_epochs = trainer.current_epoch 
+    actual_epochs = epochs #trainer.current_epoch 
     hyper_suffix = re.sub(r'E\d+', f'E{actual_epochs}', hyper_suffix)
     hyper_suffix += f"_ts{current_timestamp}"
 
@@ -565,4 +396,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    #python -m train --data-path="C:\Users\marco\Desktop\Magistrale\ERASMUS\COURSES TUM\Practicals\Hands on Generative AI\Project\Hands-on-Generative-AI\data\train2017" --resume-checkpoint="C:\Users\marco\Desktop\Magistrale\ERASMUS\COURSES TUM\Practicals\Hands on Generative AI\Project\Hands-on-Generative-AI\checkpoints\weights\LDM_final_T1000_LR00001_E24_SA_ts20251125_144930.pth" --epochs=30
+    #python -m train --data-path="C:\Users\marco\Desktop\Magistrale\ERASMUS\COURSES TUM\Practicals\Hands on Generative AI\Project\Hands-on-Generative-AI\data\train2017" --epochs=30
