@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import copy
 
 
 class SinusoidalPositionEmbeddings(nn.Module):
@@ -157,3 +158,41 @@ class ResBlock(nn.Module):
             h = self.attention(h)
             
         return h
+    
+
+
+class EMAModel(nn.Module):
+    """
+    Mantiene una media mobile esponenziale (EMA) dei pesi del modello.
+    I pesi EMA producono immagini molto più stabili e nitide rispetto ai pesi 'live'.
+    """
+    def __init__(self, model, decay=0.999):
+        super().__init__()
+        self.decay = decay
+        
+        # 1. Clona la struttura del modello originale
+        self.ema_model = copy.deepcopy(model)
+        
+        # 2. Imposta in modalità eval (niente dropout, batchnorm fissa)
+        self.ema_model.eval()
+        
+        # 3. Disabilita il calcolo dei gradienti per risparmiare memoria
+        # (L'EMA non viene allenato con backprop, ma aggiornato con formula matematica)
+        for param in self.ema_model.parameters():
+            param.requires_grad = False
+            
+    @torch.no_grad()
+    def update(self, model):
+        """
+        Aggiorna i pesi EMA usando i pesi attuali del modello in training.
+        Formula: ema_weight = decay * ema_weight + (1 - decay) * new_weight
+        """
+        # Itera su tutti i parametri (pesi e bias) accoppiando EMA e Modello Live
+        for ema_param, current_param in zip(self.ema_model.parameters(), model.parameters()):
+            
+            # Update in-place per velocità
+            ema_param.data.mul_(self.decay).add_(current_param.data, alpha=1 - self.decay)
+
+    def forward(self, x, t):
+        """Pass-through per usare l'EMA come un modello normale"""
+        return self.ema_model(x, t)

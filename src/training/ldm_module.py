@@ -6,7 +6,7 @@ from torch import nn
 from typing import Optional
 from src.utils.sde_utils import *
 import torch.nn.functional as F
-
+from src.models.components import EMAModel
 
 #from src.models.unet_model import UNet
 
@@ -37,6 +37,7 @@ class LDMLightningModule(pl.LightningModule):
         self.n_timesteps = hparams['n_timesteps'] # N for IS calculation
         self.cfg = cfg 
         self.eps = float(cfg['ForwardConfig']['eps'])
+        self.ema_model = hparams['ema']
 
 
 
@@ -169,8 +170,13 @@ class LDMLightningModule(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        return torch.optim.AdamW(self.parameters(), lr=self.lr)
     
+    # def on_train_batch_end(self, outputs, batch, batch_idx):
+    # # Aggiorna EMA dopo ogni batch
+    #     self.global_step += 1
+    #     if self.global_step >= self.start_ema_step:
+    #         self._update_ema()
 
     # def on_train_epoch_end(self):
     #         """

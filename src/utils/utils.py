@@ -19,7 +19,7 @@ from torchvision import transforms
 #from src.models.unet_model import UNet  # Your custom UNet model
 from src.models.UNet import UNet
 from .vae_utils import get_vae_encoder_func
-
+from src.models.components import EMAModel
 
 
 def sample_hparams(trial):
@@ -162,8 +162,8 @@ def setup(cfg, data_path: str, device: torch.device):
             download=False   
         )
 
-        indices = [0] * 128 # Example indices for a small subset
-        full_dataset = torch.utils.data.Subset(full_dataset, indices)
+        # indices = np.arange(128)  # Example indices for a small subset
+        # full_dataset = torch.utils.data.Subset(full_dataset, indices)
         # Define split sizes
         val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
         train_size = len(full_dataset) - val_size
@@ -179,7 +179,7 @@ def setup(cfg, data_path: str, device: torch.device):
 
 
         train_loader = DataLoader(train_dataset, batch_size=forward_cfg['batch_size'], shuffle=True, num_workers=forward_cfg['num_workers'])# CHange Batch size
-        val_loader = DataLoader(val_dataset, batch_size=forward_cfg['batch_size'], shuffle=True, num_workers=forward_cfg['num_workers']) # Change Batch size
+        val_loader = DataLoader(val_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers']) # Change Batch size
 
         print(f"Dataset loaded: Total {len(full_dataset)} images.")
         print(f" -> Train Loader: {len(train_dataset)} images.")
@@ -191,7 +191,8 @@ def setup(cfg, data_path: str, device: torch.device):
     # B. Model and Diffusion Setup
     unet_model = UNet(in_channels=forward_cfg['latent_channels']).to(device)#, out_channels=forward_cfg['latent_channels'], features=forward_cfg['features'], ).to(device)
     vae_encoder_func, vae_decoder_func = get_vae_encoder_func(device) # VAE Encoder function
-    
+    ema_model = EMAModel(unet_model).to(device)
+
     # Initialize ForwardProcess (contains the subVP_SDE instance)
     forward_process = Diffusion_Processes(forward_cfg)
     sde = SubVPSDE(beta_max=forward_cfg['beta_max'], beta_min=forward_cfg['beta_min'], N=forward_cfg['N'])
@@ -216,7 +217,8 @@ def setup(cfg, data_path: str, device: torch.device):
         'n_timesteps': forward_cfg['N'],
         'is_probabilities': is_probabilities, # Pass the IS tensor through hparams for access in training_step
         'batch_size': forward_cfg['batch_size'],
-        'data_path': data_path
+        'data_path': data_path, 
+        'ema': ema_model 
     }
 
 

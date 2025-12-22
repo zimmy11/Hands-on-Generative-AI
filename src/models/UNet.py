@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
 from .components import ResBlock, SinusoidalPositionEmbeddings
+import torch.nn.functional as F
 
 class UNet(nn.Module):
     def __init__(self, 
@@ -43,7 +44,7 @@ class UNet(nn.Module):
                 # Check se serve attenzione a questo livello (logica semplificata basata sui canali o risoluzione)
                 # In Song et al, l'attenzione è spesso a 16x16. 
                 # Se l'input è 32x32: Level 0 (32), Level 1 (16) -> Attn qui, Level 2 (8).
-                is_attn = (ds in [2, 4]) # Esempio: applica attn dopo 1 o 2 downsamples
+                #is_attn = (ds in [2, 4]) # Esempio: applica attn dopo 1 o 2 downsamples
                 # Nota: Per precisione assoluta, dovremmo tracciare la risoluzione attuale (H, W).
                 # Qui attivo l'attenzione sull'ultimo blocco se 'mult' è alto, stile DDPM.
                 is_attn = (level >= len(channel_mults) - 2) # Attenzione sugli strati profondi (bassa ris)
