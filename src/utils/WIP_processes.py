@@ -26,6 +26,9 @@ class Diffusion_Processes:
     def __init__(self, cfg: dict):
         self.N = cfg["N"]
         self.sde_type = cfg["sde_type"].lower()
+        self.conditional = cfg.get("conditional", False)
+        self.num_attributes = cfg.get("num_attributes", 0)
+        self.guidance_scale = cfg.get("guidance_scale", 1.5)
 
         if self.sde_type == "ve":
             # You can pass sigma_min, sigma_max, etc. via cfg if you want
@@ -35,6 +38,7 @@ class Diffusion_Processes:
             self.sde: SDE = VPSDE(N=self.N)
         else:
             self.sde: SDE = SubVPSDE(N=self.N)
+        
 
     @torch.no_grad()
     def forward_process(self, z0: torch.Tensor, t: torch.Tensor = None):
@@ -76,7 +80,8 @@ class Diffusion_Processes:
         shape,
         num_steps: int = None,
         probability_flow: bool = False,
-        device: torch.device = None
+        device: torch.device = None,
+        labels: torch.Tensor = None,
     ):
         """
         Reverse diffusion: sample from the data distribution using the learned model.
@@ -113,19 +118,34 @@ class Diffusion_Processes:
         print(f"This is the value of T: {T}")
 
 
-        def score_fn(x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        def score_fn(x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
             """
             Computes the score using the pre-trained model.
             Handles the mapping from continuous SDE time t to model-specific inputs.
             """
+            if self.conditional:
+                null_y = torch.full((B,), self.num_classes, device=device)
+                x_combined = torch.cat([x,x], dim=0)
+                t_combined = torch.cat([t,t], dim=0)
+                labels_combined = torch.cat([labels, null_y], dim=0)
+            else:
+                x_combined = x
+                t_combined = t
+                labels_combined = None
+
             # 1. Get the marginal std (sigma) from the SDE
             #    std shape: (B,)
             _, std = self.sde.marginal_prob(x, t)
-            model_input_t = t
+            # model_input_t = t
 
             # 3. Forward Pass
             # .sample is REQUIRED because diffusers models return an output object
-            model_out = model(x, model_input_t)
+            model_out = model(x_combined, t_combined, labels_combined)
+
+            eps_cond, eps_uncond = model_out.chunk(2, dim=0)
+
+            # CDF Extrapolation
+            eps_cfg = eps_uncond + self.guidance_scale * (eps_cond - eps_uncond)
 
             # 4. Convert Output to Score
             # Reshape std for broadcasting: (B, 1, 1, 1)
@@ -134,11 +154,11 @@ class Diffusion_Processes:
             if self.sde_type == "ve":
                 # VE: Model predicts score * sigma (approx).
                 # score = output / sigma
-                score = model_out / (std + 1e-6)
+                score = eps_cfg / (std + 1e-6)
             else:
                 # VP: Model predicts noise (epsilon).
                 # score = -epsilon / sigma
-                score = -model_out / (std + 1e-6)
+                score = -eps_cfg / (std + 1e-6)
 
             return score
 
@@ -155,7 +175,7 @@ class Diffusion_Processes:
         # Time discretization from T -> 0
         for i in reversed(range(num_steps)):
             t_i = torch.full((B,), T * i / num_steps, device=device)
-            f, G = rsde.discretize(x, t_i)  # f: (B, ...), G: (B,)
+            f, G = rsde.discretize(x, t_i, labels)  # f: (B, ...), G: (B,)
 
             G_b = _expand_batch_vector_to(x, G)
 

@@ -11,7 +11,8 @@ class UNet(nn.Module):
                  channel_mults=(1, 2, 4, 8),
                  attn_resolutions=(16,), # Risoluzioni dove applicare Attenzione
                  num_res_blocks=2,
-                 dropout=0.0):
+                 dropout=0.0,
+                 num_attributes=40):
         super().__init__()
         
         self.model_channels = model_channels
@@ -21,6 +22,13 @@ class UNet(nn.Module):
         self.time_mlp = nn.Sequential(
             SinusoidalPositionEmbeddings(model_channels),
             nn.Linear(model_channels, self.time_embed_dim),
+            nn.SiLU(),
+            nn.Linear(self.time_embed_dim, self.time_embed_dim),
+        )
+
+        # Attribute encoding
+        self.attribute_encoder = nn.Sequential(
+            nn.Linear(num_attributes, self.time_embed_dim),
             nn.SiLU(),
             nn.Linear(self.time_embed_dim, self.time_embed_dim),
         )
@@ -107,9 +115,16 @@ class UNet(nn.Module):
         self.out_act = nn.SiLU()
         self.out_conv = nn.Conv2d(current_channels, out_channels, kernel_size=3, padding=1)
 
-    def forward(self, x, t):
+    def forward(self, x, t, labels = None):
         # Time Embedding
         t_emb = self.time_mlp(t)
+
+        # Attribute embedding
+        if labels is not None:
+            y_emb = self.attribute_encoder(labels.float())
+            cond_emb = t_emb + y_emb
+        else:
+            cond_emb = t_emb
         
         # Initial Conv
         x = self.input_conv(x)
@@ -120,7 +135,7 @@ class UNet(nn.Module):
         # --- Encoder ---
         for layer in self.down_blocks:
             if isinstance(layer, ResBlock):
-                x = layer(x, t_emb)
+                x = layer(x, cond_emb)
                 skips.append(x)
             else: # Downsample Conv
                 x = layer(x)
@@ -129,8 +144,8 @@ class UNet(nn.Module):
         #print(f"Bottleneck In: {x.shape}")
         
         # --- Bottleneck ---
-        x = self.mid_block1(x, t_emb)
-        x = self.mid_block2(x, t_emb)
+        x = self.mid_block1(x, cond_emb)
+        x = self.mid_block2(x, cond_emb)
         
         #print(f"Bottleneck Out: {x.shape}")
         
@@ -145,7 +160,7 @@ class UNet(nn.Module):
                     x = F.interpolate(x, size=skip.shape[-2:], mode='bilinear', align_corners=False)
                 
                 x = torch.cat([x, skip], dim=1)
-                x = layer(x, t_emb)
+                x = layer(x, cond_emb)
             else: # Upsample
                 x = layer(x)
         

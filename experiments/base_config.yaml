@@ -23,6 +23,13 @@ target_snr: 0.16
 rev_type: 'sde'
 sde_type: 'subVP'
 
+
+# --- CFG PARAMETERS ---
+guidance_scale: 1.5
+conditional: True
+num_attributes: 40
+cfg_mask_prob: 0.1
+
 # --- TRAINING HYPERPARAMETERS (Phase 2: Unconditional LDM) ---
 epochs: 50
 learning_rate: 0.0001
@@ -46,4 +53,4 @@ num_workers: 0
 
 # data_path will be passed via the gcloud command line argument, 
 # but a default is included here for local testing consistency.
-data_path: ./data/coco2017/train2017
+data_path: ../data  # Path to the CelebA-HQ dataset

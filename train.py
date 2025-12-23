@@ -77,6 +77,11 @@ def main():
     parser.add_argument('--early-stopping-patience', type=int)
     parser.add_argument('--sde_type', type=str)
 
+    parser.add_argument('--guidance-scale', type=bool)
+    parser.add_argument('--conditional', type=int)
+    parser.add_argument('--num_attributes', type=int)
+    parser.add_argument('--cfg_mask_prob', type=str)
+
     args = parser.parse_args()
 
     # ---------------------------
@@ -140,6 +145,11 @@ def main():
     attn       = get_param('self_attention', args.self_attention)
     workers    = get_param('num_workers', args.num_workers)
     early_stopping_patience    = get_param('early_stopping_patience', args.early_stopping_patience)
+
+    guidance_scale = get_param('guidance_scale', args.guidance_scale)
+    conditional   = get_param('conditional', args.conditional)
+    num_attributes = get_param('num_attributes', args.num_attributes)
+    cfg_mask_prob  = get_param('cfg_mask_prob', args.cfg_mask_prob)
     
     latent_h = image_size // vae_factor
     latent_w = image_size // vae_factor
@@ -150,124 +160,46 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     cfg = {
-        'ForwardConfig': {
-            # Operational parameters (hardcoded for training logic)
-            't': t_forward,
-            'final': final,
-            'eps': eps,
-            'closed_formula': closed_formula,
-            'seed': seed,
-            'sde_type': sde_type,
-            
-            # SDE Parameters from YAML
-            'beta_min': beta_min,
-            'beta_max': beta_max,
-            'N': N_timesteps,
-            'schedule': schedule,
-            
-            # Model/Data Parameters from YAML
-            'use_importance_sampling': use_is,
-            'latent_channels': latent_ch,
-            'image_size': image_size,
-            'vae_scale_factor': vae_scale,
-            'validation_split_ratio': val_split,
-            'features': feats,
-            'self_attention': attn,
-            'num_workers': workers,
-            'data_path': args.data_path, # Overwrite YAML path with CLI arg
-            
-            # Training Meta
-            'epochs': epochs,
-            'learning_rate': lr,
-            'batch_size': batch_size,
-            'model': model_type, 
-            'early_stopping_patience': early_stopping_patience
-        },
-        'ReverseConfig': {
-            # Operational parameters
-            'output_path': "reverse.pt",
-            'scores': "scores.pt",
-            't0': t_0,
-            't1': t_1,
-            'device': device,
-            'dtype': None,
-            'shape': current_shape,
-            'seed': seed,
-            'corrector': corrector,
-            'n_corr': n_corr,
-            'target_snr': target_snr,
-            'rev_type': rev_type,
-            'sde_type': sde_type,
-
-            # Shared Parameters from YAML
-            'beta_min': beta_min,
-            'beta_max': beta_max,
-            'N': N_timesteps,
-            'schedule': schedule,
-            'use_importance_sampling': use_is,
-            'latent_channels': latent_ch,
-            'image_size': image_size,
-            'vae_scale_factor': vae_scale,
-            'validation_split_ratio': val_split,
-            'features': feats,
-            'self_attention': attn,
-            'num_workers': workers,
-            'data_path': args.data_path, # Overwrite YAML path with CLI arg
-            
-            # Meta
-            'epochs': epochs,
-            'learning_rate': lr,
-            'batch_size': batch_size,
-            'model': model_type, 
-            'early_stopping_patience': early_stopping_patience
-        },
-        'LikelihoodConfig': {
-            # Operational parameters
-            'output_path': "reverse.pt",
-            'scores': "scores.pt",
-            't0': t_0,
-            't1': t_1,
-            'device': device,
-            'dtype': None,
-
-            # Shared Parameters from YAML
-            'beta_min': beta_min,
-            'beta_max': beta_max,
-            'N': N_timesteps,
-            'schedule': schedule,
-            'use_importance_sampling': use_is,
-            'latent_channels': latent_ch,
-            'image_size': image_size,
-            'vae_scale_factor': vae_scale,
-            'validation_split_ratio': val_split,
-            'features': feats,
-            'self_attention': attn,
-            'num_workers': workers,
-            'data_path': args.data_path, # Overwrite YAML path with CLI arg
-            
-            # Meta
-            'epochs': epochs,
-            'learning_rate': lr,
-            'batch_size': batch_size,
-            'model': model_type, 
-            'early_stopping_patience': early_stopping_patience
+        'N': N_timesteps,
+        'sde_type': sde_type,
+        'epochs': epochs,
+        'learning_rate': lr,
+        'batch_size': batch_size,
+        'model_type': model_type,
+        'latent_channels': latent_ch,
+        'image_size': image_size,
+        'vae_scale_factor': vae_scale,
+        'vae_factor': vae_factor,
+        'validation_split_ratio': val_split,
+        'features': feats,
+        'self_attention': attn,
+        'num_workers': workers,
+        'early_stopping_patience': early_stopping_patience,
+        'guidance_scale': guidance_scale,
+        'conditional': conditional,
+        'num_attributes': num_attributes,
+        'cfg_mask_prob': cfg_mask_prob,
+        'seed': seed,
+        'beta_min': beta_min,
+        'beta_max': beta_max,
+        'use_importance_sampling': use_is,
+        'eps': eps
         }
-    }
     
     
 
     # 4. Initialize Modules and DataLoaders
-    ldm_module, train_loader, val_loader = setup(cfg, args.data_path, device)
+    ldm_module, train_loader, val_loader = setup(cfg, None, device)
     
     # --- W&B and Logging Setup ---
-    self_attention = cfg['ForwardConfig']['self_attention']
+    self_attention = cfg['self_attention']
     lr_str = str(lr).replace('.', '')
     hyper_suffix = f"T{N_timesteps}_LR{lr_str}_E{epochs}"
 
     if self_attention:
-        hyper_suffix += "_SA"
+        hyper_suffix += "_SA_CFG"
     if resume_ckpt_cli:
-        hyper_suffix += "_RESUME"
+        hyper_suffix += "_RESUME_CFG"
 
 
 
@@ -345,7 +277,7 @@ def main():
     # 8. Initialize Trainer (Optimized for T4/GCP Cost Saving)
     trainer = Trainer(
         logger=wandb_logger,
-        accelerator='cuda',
+        accelerator='cpu', #'cpu' or 'cuda'
         devices="auto",                      # Use 1 T4 GPU
         # accumulate_grad_batches=2,
         max_epochs=epochs,

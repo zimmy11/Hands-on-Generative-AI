@@ -56,7 +56,7 @@ def make_objective(cfg):
         h = sample_hparams(trial)
 
         # --- aggiorna cfg ---
-        cfg["ForwardConfig"].update({
+        cfg.update({
             "learning_rate": h["learning_rate"],
             "batch_size": h["batch_size"],
             "sigma_min": h["sigma_min"],
@@ -67,17 +67,17 @@ def make_objective(cfg):
         })
 
         #  training corto = proxy
-        cfg["ForwardConfig"]["epochs"] = 10
+        cfg["epochs"] = 10
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         ldm_module, train_loader, val_loader = setup(cfg, device = device , data_path = None)
 
-        self_attention = cfg['ForwardConfig']['self_attention']
-        lr =  cfg['ForwardConfig']['learning_rate']
+        self_attention = cfg['self_attention']
+        lr =  cfg['learning_rate']
         lr_str = str(lr).replace('.', '')
-        N_timesteps = cfg['ForwardConfig']['N']
-        epochs = cfg['ForwardConfig']['epochs']
+        N_timesteps = cfg['N']
+        epochs = cfg['epochs']
 
         hyper_suffix = f"T{N_timesteps}_LR{lr_str}_E{epochs}"
 
@@ -85,7 +85,7 @@ def make_objective(cfg):
             hyper_suffix += "_SA"
 
         wandb_logger = WandbLogger(project = "LDM Training",
-        name=f"LDM_{hyper_suffix}", config=cfg['ForwardConfig'])       
+        name=f"LDM_{hyper_suffix}", config=cfg)       
         #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
         #log_model="all")
     
@@ -94,7 +94,7 @@ def make_objective(cfg):
         trainer = Trainer(
             accelerator="cuda",
             devices=1,
-            max_epochs=cfg["ForwardConfig"]["epochs"],
+            max_epochs=cfg["epochs"],
             logger=wandb_logger,
             callbacks=[
                 PyTorchLightningPruningCallback(trial, monitor="val_loss")
@@ -145,7 +145,7 @@ def setup(cfg, data_path: str, device: torch.device):
 
     # A. Data Loading & Splitting
 
-    forward_cfg = cfg['ForwardConfig']
+    forward_cfg = cfg
     
     try:
 
@@ -154,7 +154,7 @@ def setup(cfg, data_path: str, device: torch.device):
         transform = transforms.Compose([transforms.CenterCrop(178), transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize([0.5]*3, [0.5]*3)])
 
         full_dataset = CelebA(
-            root="./data",
+            root="../data",
             # root = data_path
             split="train",
             target_type="attr",

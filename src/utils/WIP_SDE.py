@@ -124,9 +124,9 @@ class SDE(abc.ABC):
             def T(self):
                 return T
 
-            def sde(self, x, t):
+            def sde(self, x, t, labels):
                 drift, diffusion = sde_fn(x, t)
-                score = score_fn(x, t)
+                score = score_fn(x, t, labels)
                 # Assume diffusion is (B,)
                 diff_sq = diffusion[:, None, None, None] ** 2
                 factor = 0.5 if self.probability_flow else 1.0
@@ -134,10 +134,10 @@ class SDE(abc.ABC):
                 diffusion_rev = 0.0 if self.probability_flow else diffusion
                 return drift, diffusion_rev
 
-            def discretize(self, x, t):
+            def discretize(self, x, t, labels):
                 # For VE SDE f is zero, so this is just G * z for SDE case.
                 f, G = discretize_fn(x, t)
-                score = score_fn(x, t)
+                score = score_fn(x, t, labels)
                 factor = 0.5 if self.probability_flow else 1.0
                 G_sq = G[:, None, None, None] ** 2
                 rev_f = f - G_sq * score * factor
