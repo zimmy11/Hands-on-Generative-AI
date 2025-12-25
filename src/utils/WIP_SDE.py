@@ -91,8 +91,6 @@ class SDE(abc.ABC):
             G: diffusion * sqrt(dt), shape (B,)
         """
         dt = self.T / self.N
-        print(f"This is the current dt: {dt}")
-        
         drift, diffusion = self.sde(x, t)
         # diffusion is assumed (B,) or broadcastable, keep Song's pattern
         f = drift * dt
@@ -126,9 +124,9 @@ class SDE(abc.ABC):
             def T(self):
                 return T
 
-            def sde(self, x, t):
+            def sde(self, x, t, labels):
                 drift, diffusion = sde_fn(x, t)
-                score = score_fn(x, t)
+                score = score_fn(x, t, labels)
                 # Assume diffusion is (B,)
                 diff_sq = diffusion[:, None, None, None] ** 2
                 factor = 0.5 if self.probability_flow else 1.0
@@ -136,16 +134,21 @@ class SDE(abc.ABC):
                 diffusion_rev = 0.0 if self.probability_flow else diffusion
                 return drift, diffusion_rev
 
-            def discretize(self, x, t):
+            def discretize(self, x, t, labels):
+                # For VE SDE f is zero, so this is just G * z for SDE case.
                 f, G = discretize_fn(x, t)
-                
-                # print(f"Drift: {f[0,:,:]}, Diffusion: {G[0,:,:]}")
-                
-                score = score_fn(x, t)
+                score = score_fn(x, t, labels)
                 factor = 0.5 if self.probability_flow else 1.0
                 G_sq = G[:, None, None, None] ** 2
                 rev_f = f - G_sq * score * factor
                 rev_G = torch.zeros_like(G) if self.probability_flow else G
+                
+                # print("probability_flow: ", self.probability_flow)
+                # print("drift: ", f)
+                # print("diffusion_rev: ", G)
+                # print("Reversed G: ", rev_G)
+                # print("Reversed f: ", rev_f[0][0][0][:5])
+                # print("score: ", score)
                 return rev_f, rev_G
 
         return RSDE()
@@ -282,11 +285,11 @@ class VPSDE(BetaScheduleSDE):
         mean = alpha_t[:, None, None, None] * x0
         return mean, std
 
-    def prior_sampling(self, shape):
+    def prior_sampling(self, shape, dtype = torch.float32):
         """
         Standard normal prior N(0, I) at time T.
         """
-        return torch.randn(*shape)
+        return torch.randn(*shape, dtype = dtype)
 
     def prior_logp(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -358,11 +361,11 @@ class SubVPSDE(BetaScheduleSDE):
         mean = alpha_t[:, None, None, None] * x0
         return mean, std
 
-    def prior_sampling(self, shape):
+    def prior_sampling(self, shape, dtype = torch.float32):
         """
         Standard normal prior N(0, I) at time T.
         """
-        return torch.randn(*shape)
+        return torch.randn(*shape, dtype = dtype)
 
     def prior_logp(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -450,11 +453,11 @@ class VESDE(SDE):
         mean = x0
         return mean, std
 
-    def prior_sampling(self, shape):
+    def prior_sampling(self, shape, dtype = torch.float32):
         """
         Gaussian prior with variance σ_max^2.
         """
-        return torch.randn(*shape) * self.sigma_max
+        return torch.randn(*shape, dtype = dtype) * self.sigma_max
 
     def prior_logp(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -467,23 +470,23 @@ class VESDE(SDE):
             quadratic / (self.sigma_max**2) + d * math.log(2.0 * math.pi * self.sigma_max**2)
         )
 
-    # # Optional: keep specialized SMLD discretization
-    # def discretize(self, x: torch.Tensor, t: torch.Tensor):
-    #     """
-    #     SMLD (NCSN) discretization for VE:
+    # Optional: keep specialized SMLD discretization
+    def discretize(self, x: torch.Tensor, t: torch.Tensor):
+        """
+        SMLD (NCSN) discretization for VE:
 
-    #         x_{i+1} = x_i + G_i z_i
+            x_{i+1} = x_i + G_i z_i
 
-    #     where G_i = sqrt(σ_i^2 - σ_{i-1}^2).
-    #     """
-    #     timestep = (t * (self.N - 1) / self.T).long()
-    #     sigmas = self.discrete_sigmas.to(t.device)
-    #     sigma = sigmas[timestep]
-    #     adjacent_sigma = torch.where(
-    #         timestep == 0,
-    #         torch.zeros_like(t),
-    #         sigmas[timestep - 1],
-    #     )
-    #     f = torch.zeros_like(x)
-    #     G = torch.sqrt(sigma**2 - adjacent_sigma**2)
-    #     return f, G
+        where G_i = sqrt(σ_i^2 - σ_{i-1}^2).
+        """
+        timestep = (t * (self.N - 1) / self.T).long()
+        sigmas = self.discrete_sigmas.to(t.device)
+        sigma = sigmas[timestep]
+        adjacent_sigma = torch.where(
+            timestep == 0,
+            torch.zeros_like(t),
+            sigmas[timestep - 1],
+        )
+        f = torch.zeros_like(x)
+        G = torch.sqrt(sigma**2 - adjacent_sigma**2)
+        return f, G

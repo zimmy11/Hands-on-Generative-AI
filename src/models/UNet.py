@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
 from .components import ResBlock, SinusoidalPositionEmbeddings
-
+import torch.nn.functional as F
 
 class UNet(nn.Module):
     def __init__(self, 
@@ -12,7 +12,7 @@ class UNet(nn.Module):
                  attn_resolutions=(16,), # Risoluzioni dove applicare Attenzione
                  num_res_blocks=2,
                  dropout=0.0,
-                 num_attributes = 40):
+                 num_attributes=40):
         super().__init__()
         
         self.model_channels = model_channels
@@ -115,13 +115,13 @@ class UNet(nn.Module):
         self.out_act = nn.SiLU()
         self.out_conv = nn.Conv2d(current_channels, out_channels, kernel_size=3, padding=1)
 
-    def forward(self, x, t, y = None):
+    def forward(self, x, t, labels = None):
         # Time Embedding
         t_emb = self.time_mlp(t)
 
-        # Attribute Embedding
-        if attributes is not None:
-            y_emb = self.attribute_encoder(y.float())
+        # Attribute embedding
+        if labels is not None:
+            y_emb = self.attribute_encoder(labels.float())
             cond_emb = t_emb + y_emb
         else:
             cond_emb = t_emb
