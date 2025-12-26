@@ -36,7 +36,7 @@ def main():
     #wandb.login(key="3f785a5ef6c94fac05a13ed4a58965545976c05b")
     # 1. Argument Parsing (Used for GCP Vertex AI Custom Job configuration)
     parser = argparse.ArgumentParser(description="PyTorch Lightning LDM Training")
-    parser.add_argument('--data-path', type=str, required=True, help='Path to the dataset directory (GCS for cloud training).')
+    # parser.add_argument('--data-path', type=str, required=True, help='Path to the dataset directory (GCS for cloud training).')
     parser.add_argument('--config-path', type=str, default='./experiments/base_config.yaml', help='Path to the YAML config file.')
     parser.add_argument('--resume-checkpoint', type=str, default=None,
                     help='Path to checkpoint file to resume from. Accepts local path or gs://bucket/path/file.(ckpt|pth|pt)')
@@ -266,7 +266,7 @@ def main():
             # se torch.load fallisce, proviamo a passare il path direttamente al trainer
             print(f"[WARNING] torch.load failed on {resume_ckpt_local}: {e}")
             ckpt_path_for_trainer = resume_ckpt_local
-        total_epochs = args.epochs if args.epochs else cfg['ForwardConfig']['epochs']
+        total_epochs = args.epochs if args.epochs else cfg['epochs']
         remaining_epochs = max(total_epochs - last_epoch_done, 0)
         print(f"[INFO] Trainer will run {remaining_epochs} additional epochs.")
 

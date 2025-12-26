@@ -36,10 +36,10 @@ class LDMLightningModule(pl.LightningModule):
         self.vae_scale_factor = hparams['vae_scale_factor']
         self.n_timesteps = hparams['n_timesteps'] # N for IS calculation
         self.cfg = cfg 
-        self.eps = float(cfg['ForwardConfig']['eps'])
+        self.eps = float(cfg['eps'])
         self.ema_model = hparams['ema']
 
-        self.cfg_dropout_prob = hparams['cfg_dropout_prob']
+        self.cfg_mask_prob = cfg.get('cfg_mask_prob', 0.1)
 
 
     def forward(self, x_t, t, labels):
@@ -60,7 +60,16 @@ class LDMLightningModule(pl.LightningModule):
 
 
         # 1. Encode Data (x_0) and Apply VAE Scale Factor
-        x_start_latents, labels = batch # Assumes Dataloader yields pixel tensor
+        # x_start_latents, labels = batch # Assumes Dataloader yields pixel tensor
+        if self.cfg['conditional'] == True:
+            x_start_latents, labels = batch # Assumes Dataloader yields pixel tensor
+            batch_size = x_start_latents.shape[0]
+            mask = torch.bernoulli(torch.full((batch_size, 1), 1- self.cfg_mask_prob, device=self.device))
+            cond_labels = labels * mask
+        else:
+            x_start_latents, _ = batch
+            batch_size = x_start_latents.shape[0]
+            cond_labels = None
         
         #print(f"1. [INPUT] Pixels Shape: {x_start_latents.shape}")
 
@@ -78,10 +87,7 @@ class LDMLightningModule(pl.LightningModule):
             # if var_lat < 0.5 or var_lat > 2.0:
             #     print(f"  WARNING: Latent Variance is {var_lat:.4f}. Expected ~1.0. Check VAE Scale Factor!")
 
-        batch_size = x_start_latents.shape[0]
-
-        mask = torch.bernoulli(torch.full((batch_size,1), 1.0 - self.cfg_dropout_prob, device = self.device))
-        cond_labels = labels.float() * mask
+        # batch_size = x_start_latents.shape[0]
         
         is_probabilities = None
         # 2. Sample time (t) using Importance Sampling (IS) or Uniform
@@ -115,7 +121,9 @@ class LDMLightningModule(pl.LightningModule):
         #print(f"   Epsilon True Shape: {epsilon_true.shape}, Std Shape: {std.shape}")
         #print(f"   t Sampled: Min={t.min().item():.4f}, Max={t.max().item():.4f}")
         # 4. Network prediction (epsilon_pred)
-        epsilon_pred = self(x_t, t, y = cond_labels)
+        # epsilon_pred = self(x_t, t, y = cond_labels) OLD
+        epsilon_pred = self(x_t, t, cond_labels)
+
         #score_true_scaled = - epsilon_true
         #print(f"3. [PREDICTION] Epsilon Pred Shape: {epsilon_pred.shape}")
 

@@ -31,9 +31,9 @@ num_attributes: 40
 cfg_mask_prob: 0.1
 
 # --- TRAINING HYPERPARAMETERS (Phase 2: Unconditional LDM) ---
-epochs: 50
+epochs: 10
 learning_rate: 0.0001
-batch_size: 16
+batch_size: 10
 model: 'LDM'  # Model type: 'ldm' for Latent Diffusion Model
 # --- SDE/DIFFUSION SCHEDULE PARAMETERS (subVP SDE) ---
 use_importance_sampling: False # Set to True to use g(t)^2 / lambda_orig(t) sampling

@@ -45,6 +45,7 @@ class UNet(nn.Module):
         # Risoluzione iniziale fittizia (assumendo input 64x64 o simile)
         # Per semplicità, decidiamo l'attenzione basandoci sui livelli
         
+        # We do not need to concatenate in self.down_blocks also the self.attributes because they are passed later in the forwards
         ds = 1
         for level, mult in enumerate(channel_mults):
             out_ch = model_channels * mult

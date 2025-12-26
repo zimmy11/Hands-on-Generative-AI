@@ -1,3 +1,4 @@
+from xml.parsers.expat import model
 import torch
 import torch.nn as nn
 
@@ -114,50 +115,85 @@ class Diffusion_Processes:
         #next(model.parameters()).device
         B = shape[0]
         T = self.sde.T
+        print("----- Reverse Process -----")
+        print(f"This is our batch size: {B}")
         print(f"This is our SDE: {self.sde}")
         print(f"This is the value of T: {T}")
 
+        # Concatenation with double passing for classifier-free guidance (only one passage in the model)
+        # def score_fn(x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
+        #     """
+        #     Computes the score using the pre-trained model.
+        #     Handles the mapping from continuous SDE time t to model-specific inputs.
+        #     """
+        #     if self.conditional:
+        #         null_y = torch.zero_like(labels) # remember to keep the same dimensions as lebels
+        #         x_combined = torch.cat([x,x], dim=0)
+        #         t_combined = torch.cat([t,t], dim=0)
+        #         labels_combined = torch.cat([labels, null_y], dim=0)
+        #     else:
+        #         x_combined = x
+        #         t_combined = t
+        #         labels_combined = None
 
-        def score_fn(x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
+        #     # 1. Get the marginal std (sigma) from the SDE
+        #     #    std shape: (B,)
+        #     _, std = self.sde.marginal_prob(x, t)
+        #     # model_input_t = t
+
+        #     # 3. Forward Pass
+        #     # .sample is REQUIRED because diffusers models return an output object
+        #     model_out = model(x_combined, t_combined, labels_combined)
+
+        #     eps_cond, eps_uncond = model_out.chunk(2, dim=0)
+
+        #     # CDF Extrapolation
+        #     eps_cfg = eps_uncond + self.guidance_scale * (eps_cond - eps_uncond)
+
+        #     # 4. Convert Output to Score
+        #     # Reshape std for broadcasting: (B, 1, 1, 1)
+        #     std = std.view(*std.shape, *([1] * (x.dim() - 1)))
+            
+        #     if self.sde_type == "ve":
+        #         # VE: Model predicts score * sigma (approx).
+        #         # score = output / sigma
+        #         score = eps_cfg / (std + 1e-6)
+        #     else:
+        #         # VP: Model predicts noise (epsilon).
+        #         # score = -epsilon / sigma
+        #         score = -eps_cfg / (std + 1e-6)
+
+        #     return score
+
+        def score_fn(self, x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
             """
-            Computes the score using the pre-trained model.
-            Handles the mapping from continuous SDE time t to model-specific inputs.
+            Computes the score using two separate passes for CFG.
             """
+            print("Labels shape inside score_fn:", None if labels is None else labels.shape)
+
             if self.conditional:
-                null_y = torch.full((B,), self.num_classes, device=device)
-                x_combined = torch.cat([x,x], dim=0)
-                t_combined = torch.cat([t,t], dim=0)
-                labels_combined = torch.cat([labels, null_y], dim=0)
+                # 1. Conditioned Pass
+                eps_cond =  model(x, t, labels)
+                
+                # 2. Unconditioned Pass
+                null_y = torch.zeros_like(labels)
+                eps_uncond = model(x, t, null_y)
+                
+                # 3. Classifier-Free Guidance Extrapolation
+                eps_cfg = eps_uncond + self.guidance_scale * (eps_cond - eps_uncond)
             else:
-                x_combined = x
-                t_combined = t
-                labels_combined = None
+                # Standard unconditioned pass
+                print("Performing unconditioned pass. Score fn.")
+                eps_cfg = model(x, t, None)
 
-            # 1. Get the marginal std (sigma) from the SDE
-            #    std shape: (B,)
+            # 4. Get marginal std for score conversion
             _, std = self.sde.marginal_prob(x, t)
-            # model_input_t = t
-
-            # 3. Forward Pass
-            # .sample is REQUIRED because diffusers models return an output object
-            model_out = model(x_combined, t_combined, labels_combined)
-
-            eps_cond, eps_uncond = model_out.chunk(2, dim=0)
-
-            # CDF Extrapolation
-            eps_cfg = eps_uncond + self.guidance_scale * (eps_cond - eps_uncond)
-
-            # 4. Convert Output to Score
-            # Reshape std for broadcasting: (B, 1, 1, 1)
             std = std.view(*std.shape, *([1] * (x.dim() - 1)))
             
+            # 5. Convert Output to Score
             if self.sde_type == "ve":
-                # VE: Model predicts score * sigma (approx).
-                # score = output / sigma
                 score = eps_cfg / (std + 1e-6)
             else:
-                # VP: Model predicts noise (epsilon).
-                # score = -epsilon / sigma
                 score = -eps_cfg / (std + 1e-6)
 
             return score
