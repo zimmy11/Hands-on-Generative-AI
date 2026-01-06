@@ -37,7 +37,7 @@ class LDMLightningModule(pl.LightningModule):
         self.n_timesteps = hparams['n_timesteps'] # N for IS calculation
         self.cfg = cfg 
         self.eps = float(cfg['eps'])
-        self.ema_model = hparams['ema']
+        #self.ema_model = hparams['ema']
 
         self.cfg_mask_prob = cfg.get('cfg_mask_prob', 0.1)
 
@@ -64,7 +64,7 @@ class LDMLightningModule(pl.LightningModule):
         if self.cfg['conditional'] == True:
             x_start_latents, labels = batch # Assumes Dataloader yields pixel tensor
             batch_size = x_start_latents.shape[0]
-            mask = torch.bernoulli(torch.full((batch_size, 1), 1- self.cfg_mask_prob, device=self.device))
+            mask = torch.bernoulli(torch.full((batch_size, 1), 1 - self.cfg_mask_prob, device=self.device))
             cond_labels = labels * mask
         else:
             x_start_latents, _ = batch

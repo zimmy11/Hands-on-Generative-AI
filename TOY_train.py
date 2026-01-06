@@ -10,6 +10,7 @@ from pytorch_lightning.loggers import WandbLogger
 import wandb
 import re
 from datetime import datetime
+from src.utils.sde_utils import calculate_importance_sampling_probabilities
 
 # --- CORE MODULES ---
 from src.models.unet_model import UNet 
@@ -55,18 +56,20 @@ def setup(cfg, device: torch.device):
 
     forward_process = Diffusion_Processes(cfg)
 
+    # Hyperparameters for Lightning Module
     hparams = {
         'learning_rate': cfg['learning_rate'],
         'n_timesteps': cfg['N'],
         'batch_size': cfg['batch_size'],
-        'vae_scale_factor': cfg['vae_scale_factor']
+        'vae_scale_factor': cfg['vae_scale_factor'], 
+        'is_probabilities': torch.ones(cfg['N'], device=device) / cfg['N']  # Uniform IS for toy, 
     }
 
     # 3. Instantiate Lightning Module
     # We pass None for VAE as we are in pixel space
     ldm_module = LDMLightningModule(
         unet_model=unet_model, 
-        diffusion_process=forward_process, 
+        forward_process=forward_process, 
         vae_encoder=None,
         vae_decoder=None,
         hparams=hparams, 
@@ -104,6 +107,9 @@ def main():
         'validation_split_ratio': yaml_config.get('validation_split_ratio', 0.2),
         'self_attention': yaml_config.get('self_attention', False),
         'model_type': yaml_config.get('model', "LDM"),
+        'eps': yaml_config.get('eps', 1e-5) ,
+        'cfg_scale': yaml_config.get('cfg_scale', 1.5), 
+        'conditional': yaml_config.get('conditional', True)
     }
     print("Configurations loaded. cfg:")
     print(cfg)

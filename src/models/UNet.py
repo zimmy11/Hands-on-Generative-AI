@@ -6,9 +6,9 @@ import torch.nn.functional as F
 class UNet(nn.Module):
     def __init__(self, 
                  in_channels=4, 
-                 model_channels=32, 
+                 model_channels=16, 
                  out_channels=4, 
-                 channel_mults=(1, 2, 4, 8),
+                 channel_mults=(1, 2, 4),
                  attn_resolutions=(16,), # Risoluzioni dove applicare Attenzione
                  num_res_blocks=2,
                  dropout=0.0,

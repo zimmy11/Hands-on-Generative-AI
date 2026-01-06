@@ -33,7 +33,7 @@ cfg_mask_prob: 0.1
 # --- TRAINING HYPERPARAMETERS (Phase 2: Unconditional LDM) ---
 epochs: 10
 learning_rate: 0.0001
-batch_size: 10
+batch_size: 2
 model: 'LDM'  # Model type: 'ldm' for Latent Diffusion Model
 # --- SDE/DIFFUSION SCHEDULE PARAMETERS (subVP SDE) ---
 use_importance_sampling: False # Set to True to use g(t)^2 / lambda_orig(t) sampling
@@ -47,7 +47,7 @@ validation_split_ratio: 0.2 # VALIDATION_SPLIT_RATIO
 features: [128, 256, 512]  # FEATURES (U-Net channel progression)
 self_attention: True     # SELF_ATTENTION (Enable self-attention layers)
 # --- DATA AND RESOURCE CONFIGURATION ---
-num_workers: 8      
+num_workers: 0      
 # Number of CPU workers for the DataLoader (Adjust based on GCP VM size)
 
 

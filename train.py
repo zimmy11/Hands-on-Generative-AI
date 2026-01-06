@@ -36,7 +36,7 @@ def main():
     #wandb.login(key="3f785a5ef6c94fac05a13ed4a58965545976c05b")
     # 1. Argument Parsing (Used for GCP Vertex AI Custom Job configuration)
     parser = argparse.ArgumentParser(description="PyTorch Lightning LDM Training")
-    # parser.add_argument('--data-path', type=str, required=True, help='Path to the dataset directory (GCS for cloud training).')
+    parser.add_argument('--data-path', type=str, required=True, help='Path to the dataset directory (GCS for cloud training).')
     parser.add_argument('--config-path', type=str, default='./experiments/base_config.yaml', help='Path to the YAML config file.')
     parser.add_argument('--resume-checkpoint', type=str, default=None,
                     help='Path to checkpoint file to resume from. Accepts local path or gs://bucket/path/file.(ckpt|pth|pt)')
@@ -158,7 +158,8 @@ def main():
     current_shape = (batch_size, latent_ch, latent_h, latent_w)
     # 3. Device Setup
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+    data_path = args.data_path
+
     cfg = {
         'N': N_timesteps,
         'sde_type': sde_type,
@@ -189,7 +190,7 @@ def main():
     
 
     # 4. Initialize Modules and DataLoaders
-    ldm_module, train_loader, val_loader = setup(cfg, None, device)
+    ldm_module, train_loader, val_loader = setup(cfg, data_path, device)
     
     # --- W&B and Logging Setup ---
     self_attention = cfg['self_attention']
@@ -273,18 +274,18 @@ def main():
     else: 
         remaining_epochs = args.epochs if args.epochs else cfg['ForwardConfig']['epochs']
    
-
+    device_str = "cuda" if torch.cuda.is_available() else "cpu"
     # 8. Initialize Trainer (Optimized for T4/GCP Cost Saving)
     trainer = Trainer(
         logger=wandb_logger,
-        accelerator='cpu', #'cpu' or 'cuda'
+        accelerator=device_str, #'cpu' or 'cuda'
         devices="auto",                      # Use 1 T4 GPU
         # accumulate_grad_batches=2,
         max_epochs=epochs,
         # precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback], #, early_stopping],
-        limit_train_batches=0.08, 
-        limit_val_batches=0.08
+        limit_train_batches=1.0, 
+        limit_val_batches=1.0
     )
 
     trainer.fit(ldm_module, train_dataloaders=train_loader, val_dataloaders=val_loader)
@@ -329,4 +330,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    #python -m train --data-path="C:\Users\marco\Desktop\Magistrale\ERASMUS\COURSES TUM\Practicals\Hands on Generative AI\Project\Hands-on-Generative-AI\data\train2017" --epochs=30
+    #python -m train --data-path="./data" --epochs=30

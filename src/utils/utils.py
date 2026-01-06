@@ -154,16 +154,18 @@ def setup(cfg, data_path: str, device: torch.device):
         transform = transforms.Compose([transforms.CenterCrop(178), transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize([0.5]*3, [0.5]*3)])
 
         full_dataset = CelebA(
-            root="../data",
+            root=data_path,
             # root = data_path
             split="train",
             target_type="attr",
             transform=transform,
             download=False   
         )
+        print("CelebA dataset loaded successfully.")
 
-        # indices = np.arange(128)  # Example indices for a small subset
-        # full_dataset = torch.utils.data.Subset(full_dataset, indices)
+
+        indices = [0] * 64  # Example indices for a small subset
+        full_dataset = torch.utils.data.Subset(full_dataset, indices)
         # Define split sizes
         val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
         train_size = len(full_dataset) - val_size

@@ -95,8 +95,8 @@ class GMMImageDataset:
             dist_sq = (grid_x - pixel_coords[i, 0])**2 + (grid_y - pixel_coords[i, 1])**2
             blob = torch.exp(-dist_sq / (2 * self.sigma_pixel**2))
 
-            print("Distance matrix")
-            print(dist_sq)
+            # print("Distance matrix")
+            # print(dist_sq)
             
             # Initialize a 3-channel image
             img = torch.zeros((channels, self.img_size, self.img_size), device=coords.device)
