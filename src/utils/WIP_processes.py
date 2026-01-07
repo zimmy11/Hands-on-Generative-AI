@@ -165,26 +165,31 @@ class Diffusion_Processes:
 
         #     return score
 
-        def score_fn(self, x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
+        def score_fn(x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
             """
             Computes the score using two separate passes for CFG.
             """
-            print("Labels shape inside score_fn:", None if labels is None else labels.shape)
+            #print("Labels shape inside score_fn:", None if labels is None else labels.shape)
 
             if self.conditional:
                 # 1. Conditioned Pass
                 eps_cond =  model(x, t, labels)
                 
                 # 2. Unconditioned Pass
-                null_y = torch.zeros_like(labels)
-                eps_uncond = model(x, t, null_y)
+                null_labels = torch.zeros((x.size(0), self.num_attributes), device=device)
+                eps_uncond = model(x, t, null_labels)
                 
                 # 3. Classifier-Free Guidance Extrapolation
                 eps_cfg = eps_uncond + self.guidance_scale * (eps_cond - eps_uncond)
+                # delta = (eps_cond - eps_uncond).abs().mean().item()
+                # print(f"CFG Delta: {delta:.6f}") # Deve essere > 0
+
             else:
                 # Standard unconditioned pass
                 print("Performing unconditioned pass. Score fn.")
-                eps_cfg = model(x, t, None)
+
+                null_labels = torch.zeros((x.size(0), self.num_attributes), device=device)
+                eps_cfg = model(x, t, null_labels)
 
             # 4. Get marginal std for score conversion
             _, std = self.sde.marginal_prob(x, t)

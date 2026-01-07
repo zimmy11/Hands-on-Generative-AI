@@ -60,16 +60,17 @@ class LDMLightningModule(pl.LightningModule):
 
 
         # 1. Encode Data (x_0) and Apply VAE Scale Factor
-        # x_start_latents, labels = batch # Assumes Dataloader yields pixel tensor
+        x_start_latents, labels = batch # Assumes Dataloader yields pixel tensor
+        batch_size = x_start_latents.shape[0]
+        num_attributes = labels.shape[1]
+
         if self.cfg['conditional'] == True:
-            x_start_latents, labels = batch # Assumes Dataloader yields pixel tensor
-            batch_size = x_start_latents.shape[0]
-            mask = torch.bernoulli(torch.full((batch_size, 1), 1 - self.cfg_mask_prob, device=self.device))
-            cond_labels = labels * mask
+            p_uncond = self.cfg_mask_prob
+            is_class_cond = torch.rand(size=(batch_size, 1), device=device) >= p_uncond 
+            cond_labels = labels.float() * is_class_cond.float()
+
         else:
-            x_start_latents, _ = batch
-            batch_size = x_start_latents.shape[0]
-            cond_labels = None
+            cond_labels = torch.zeros((batch_size, num_attributes), device=device)
         
         #print(f"1. [INPUT] Pixels Shape: {x_start_latents.shape}")
 
@@ -80,9 +81,9 @@ class LDMLightningModule(pl.LightningModule):
         #print(f"1. [INPUT] Pixels Shape after encoding: {x_start_latents.shape}")
 
 
-        if self.global_step % 100 == 0:
-            var_lat = x_start_latents.var()
-            mean_lat = x_start_latents.mean()
+        # if self.global_step % 100 == 0:
+        #     var_lat = x_start_latents.var()
+        #     mean_lat = x_start_latents.mean()
             #print(f"  Latents (scaled): Mean={mean_lat:.4f}, Var={var_lat:.4f}")
             # if var_lat < 0.5 or var_lat > 2.0:
             #     print(f"  WARNING: Latent Variance is {var_lat:.4f}. Expected ~1.0. Check VAE Scale Factor!")

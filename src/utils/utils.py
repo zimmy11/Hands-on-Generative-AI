@@ -164,8 +164,8 @@ def setup(cfg, data_path: str, device: torch.device):
         print("CelebA dataset loaded successfully.")
 
 
-        indices = [0] * 64  # Example indices for a small subset
-        full_dataset = torch.utils.data.Subset(full_dataset, indices)
+        # indices = [0] * 128  # Example indices for a small subset
+        # full_dataset = torch.utils.data.Subset(full_dataset, indices)
         # Define split sizes
         val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
         train_size = len(full_dataset) - val_size
