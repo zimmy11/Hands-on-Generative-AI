@@ -75,7 +75,7 @@ def main():
     parser.add_argument('--self-attention', type=bool)
     parser.add_argument('--num-workers', type=int)
     parser.add_argument('--early-stopping-patience', type=int)
-    parser.add_argument('--sde_type', type=str)
+    parser.add_argument('--sde-type', type=str)
 
     parser.add_argument('--guidance-scale', type=bool)
     parser.add_argument('--conditional', type=int)
@@ -145,7 +145,7 @@ def main():
     attn       = get_param('self_attention', args.self_attention)
     workers    = get_param('num_workers', args.num_workers)
     early_stopping_patience    = get_param('early_stopping_patience', args.early_stopping_patience)
-
+    likelihood_weighting = get_param('likelihood_weighting', False)
     guidance_scale = get_param('guidance_scale', args.guidance_scale)
     conditional   = get_param('conditional', args.conditional)
     num_attributes = get_param('num_attributes', args.num_attributes)
@@ -184,13 +184,14 @@ def main():
         'beta_min': beta_min,
         'beta_max': beta_max,
         'use_importance_sampling': use_is,
-        'eps': eps
+        'eps': eps, 
+        'likelihood_weighting': likelihood_weighting
         }
     
     
 
     # 4. Initialize Modules and DataLoaders
-    ldm_module, train_loader, val_loader = setup(cfg, data_path, device)
+    ldm_module, train_loader, val_loader, test_loader = setup(cfg, data_path, device)
     
     # --- W&B and Logging Setup ---
     self_attention = cfg['self_attention']
@@ -217,11 +218,11 @@ def main():
     checkpoint_path = os.getenv("AIP_MODEL_DIR", './checkpoints/')
     interim_save_dir = os.path.join(checkpoint_path, 'interim')
     os.makedirs(interim_save_dir, exist_ok=True)
-
+    timestep_curr = datetime.now().strftime("%H%M%S")
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=interim_save_dir, 
-        filename='ldm-epoch{epoch:02d}-val_loss{val_loss:.4f}',
+        filename=f"ldm-epoch{{epoch:02d}}-val_loss{{val_loss:.4f}}-{timestep_curr}",
         monitor='val_loss',
         mode='min',
         every_n_epochs=50,
@@ -284,8 +285,8 @@ def main():
         max_epochs=epochs,
         # precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback], #, early_stopping],
-        limit_train_batches=0.08, 
-        limit_val_batches=0.08
+        limit_train_batches=0.1, 
+        limit_val_batches=0.1
     )
 
     trainer.fit(ldm_module, train_dataloaders=train_loader, val_dataloaders=val_loader)

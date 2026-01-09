@@ -37,6 +37,7 @@ class LDMLightningModule(pl.LightningModule):
         self.n_timesteps = hparams['n_timesteps'] # N for IS calculation
         self.cfg = cfg 
         self.eps = float(cfg['eps'])
+        self.likelihood_weighting = cfg.get('likelihood_weighting', True)
         #self.ema_model = hparams['ema']
 
         self.cfg_mask_prob = cfg.get('cfg_mask_prob', 0.1)
@@ -90,7 +91,6 @@ class LDMLightningModule(pl.LightningModule):
 
         # batch_size = x_start_latents.shape[0]
         
-        is_probabilities = None
         # 2. Sample time (t) using Importance Sampling (IS) or Uniform
         if is_probabilities is not None:
             # Importance Sampling (using the pre-calculated tensor)
@@ -147,18 +147,19 @@ class LDMLightningModule(pl.LightningModule):
 
 
         # 6. Likelihood Weighting (λ(t) = g(t)^2)
-        # g_squared_tensor = sde.get_g_squared(t)
-        # print(f"5. [WEIGHTING] g(t)^2 shape: {g_squared_tensor.shape}, Stats: Min={g_squared_tensor.min().item():.4f}, Max={g_squared_tensor.max().item():.4f}, Mean={g_squared_tensor.mean().item():.4f}")
-        # # Reshape for broadcasting (B, 1, 1, 1)
-        # weighting_factor = g_squared_tensor[:, None, None, None] 
-        # print(f"   Weighting factor shape (after unsqueeze): {weighting_factor.shape}")
-        # weighting_factor = sde.get_alpha_original(t)**2
-        # weighting_factor = weighting_factor[:, None, None, None]
-        #var_t = std**2
-        #weighting_factor = g_squared_tensor[:, None, None, None]      
+        if self.likelihood_weighting:
+            # For subVP SDE, λ(t) = g(t)^2
+            g_squared_tensor = self.forward_process.sde.get_g_squared(t)
+            # print(f"5. [WEIGHTING] g(t)^2 shape: {g_squared_tensor.shape}, Stats: Min={g_squared_tensor.min().item():.4f}, Max={g_squared_tensor.max().item():.4f}, Mean={g_squared_tensor.mean().item():.4f}")
+            # # Reshape for broadcasting (B, 1, 1, 1)
+            weighting_factor = g_squared_tensor[:, None, None, None] 
+            # print(f"   Weighting factor shape (after unsqueeze): {weighting_factor.shape}")
+        else:
+            weighting_factor = torch.ones((batch_size, 1, 1, 1), device=device)
+            # print(f"5. [WEIGHTING] No likelihood weighting applied. Using ones. Shape: {weighting_factor.shape}")
         #   
         # Total Weighted Loss (L(t) * g(t)^2)
-        weighted_loss = per_sample_loss# * weighting_factor #* importance_weight
+        weighted_loss = per_sample_loss * weighting_factor #* importance_weight
         # print(f"   Weighted loss shape (before reduction): {weighted_loss.shape}")
         
         # Final batch loss (torch.mean over the batch)

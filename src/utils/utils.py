@@ -3,6 +3,7 @@ import optuna
 from optuna.integration import PyTorchLightningPruningCallback
 import wandb
 import torch
+import torchvision
 from torch.utils.data import DataLoader, random_split
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -124,7 +125,34 @@ def make_objective(cfg):
 
     return objective
 
-
+# --- VISUALIZATION FUNCTION ---
+def log_denoising_step_wandb(x_tensor, step, total_steps, caption_prefix="Denoising"):
+    """
+    Callback per loggare gli step intermedi del reverse process su WandB.
+    
+    Args:
+        x_tensor: Il batch di immagini correnti (B, C, H, W)
+        step: Lo step corrente (int) (contando alla rovescia da N a 0)
+        total_steps: Il numero totale di step
+    """
+    # 1. Denormalizza/Clampa le immagini per visualizzazione
+    # Assumiamo che il modello lavori in [-1, 1], portiamo a [0, 1]
+    x_vis = x_tensor.detach().cpu().clamp(-1.0, 1.0)
+    x_vis = (x_vis + 1.0) / 2.0
+    
+    # 2. Crea una grid (es. primi 16 sample)
+    n_show = min(16, x_vis.shape[0])
+    grid = torchvision.utils.make_grid(x_vis[:n_show], nrow=4)
+    
+    # 3. Logga su WandB
+    # Usiamo lo 'step' di WandB globale se disponibile, altrimenti logghiamo come media panel
+    # In genere per il denoising process si preferisce loggare un'immagine con caption
+    percent_complete = 100 * (1 - step / total_steps)
+    caption = f"{caption_prefix} - Step {step}/{total_steps} ({percent_complete:.1f}%)"
+    
+    wandb.log({
+        f"generated_samples/process": wandb.Image(grid, caption=caption)
+    })
 
 
 # --- SETUP FUNCTION ---
@@ -168,12 +196,13 @@ def setup(cfg, data_path: str, device: torch.device):
         # full_dataset = torch.utils.data.Subset(full_dataset, indices)
         # Define split sizes
         val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
-        train_size = len(full_dataset) - val_size
-        
+        test_size = val_size
+        train_size = len(full_dataset) - val_size - test_size
+
         # Deterministic Split for reproducibility
         torch.manual_seed(forward_cfg['seed'])
-        train_dataset, val_dataset = random_split(
-            full_dataset, [train_size, val_size]
+        train_dataset, val_dataset, test_dataset = random_split(
+            full_dataset, [train_size, val_size, test_size]
         )
         # train_dataset = full_dataset
         # val_dataset = full_dataset
@@ -182,6 +211,8 @@ def setup(cfg, data_path: str, device: torch.device):
 
         train_loader = DataLoader(train_dataset, batch_size=forward_cfg['batch_size'], shuffle=True, num_workers=forward_cfg['num_workers'])# CHange Batch size
         val_loader = DataLoader(val_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers']) # Change Batch size
+        test_loader = DataLoader(test_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers']) # Change Batch size
+
 
         print(f"Dataset loaded: Total {len(full_dataset)} images.")
         print(f" -> Train Loader: {len(train_dataset)} images.")
@@ -220,7 +251,8 @@ def setup(cfg, data_path: str, device: torch.device):
         'is_probabilities': is_probabilities, # Pass the IS tensor through hparams for access in training_step
         'batch_size': forward_cfg['batch_size'],
         'data_path': data_path, 
-        'ema': ema_model 
+        'ema': ema_model , 
+        'likelihood_weighting': forward_cfg.get('likelihood_weighting', True)
     }
 
 
@@ -235,4 +267,4 @@ def setup(cfg, data_path: str, device: torch.device):
         cfg = cfg
     )
     
-    return ldm_module, train_loader, val_loader
+    return ldm_module, train_loader, val_loader, test_loader
