@@ -9,6 +9,7 @@ import wandb
 import os
 from tqdm import tqdm
 import torchvision
+from src.utils.vae_utils import get_vae_encoder_func
 # Import dei tuoi moduli
 from src.utils.sde_utils import Diffusion_Processes, SubVPSDE, VESDE, VPSDE
 from src.utils.utils import setup
@@ -49,7 +50,7 @@ def load_model_from_checkpoint(cfg, checkpoint_path, device):
     
     return unet
 
-def calculate_nll(model, loader, forward_process, device):
+def calculate_nll(model, loader, forward_process, device, vae_encoder, vae_scale_factor):
     """
     Calcola la NLL approssimata (o Loss media) sul test set.
     Per SDE esatti servirebbe l'ODE solver, qui usiamo la Loss di training come proxy.
@@ -68,9 +69,12 @@ def calculate_nll(model, loader, forward_process, device):
                 x = batch.to(device)
                 y = None
 
-            # Forward process per ottenere x_t
-            t = torch.rand(x.shape[0], device=device) * forward_process.sde.T
-            z_t, t, eps = forward_process.forward_process(x, t)
+            latents = vae_encoder(x) 
+            latents = latents * vae_scale_factor # Importante: scalare i latenti!
+            
+            # Ora usiamo i LATENTI per il forward process
+            t = torch.rand(latents.shape[0], device=device) * forward_process.sde.T
+            z_t, t, eps = forward_process.forward_process(latents, t)
             
             # Prediction
             # NOTA: Assicurati che score_fn sia coerente con come calcoli la loss in training
@@ -102,26 +106,32 @@ def main():
     
     # Override batch size per testing
     cfg['batch_size'] = args.batch_size
+    cfg['N'] = cfg.get('n_timesteps', 1000)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Setup WandB per il test
-    wandb.init(project="LDM_Testing", config=cfg, name="FID_IS_Evaluation")
+    wandb.init(project="LDM_Testing", config=cfg, name=f"FID_IS_Evaluation_{os.path.basename(args.checkpoint_path)}")
 
     # 1. Setup Data & Model
     # Usiamo setup parziale per avere i loader
     # Nota: Setup restituisce LDM module, ma qui ricostruiamo per controllo fine
     _, _, _, test_loader = setup(cfg, args.data_path, device)
+
     
+    if not os.path.dirname(args.checkpoint_path):
+        args.checkpoint_path = os.path.join("checkpoints", "weights", args.checkpoint_path)
+
     unet = load_model_from_checkpoint(cfg, args.checkpoint_path, device)
     
     # Setup Processi
     diff_proc = Diffusion_Processes(cfg)
-
+    vae_encoder, _ = get_vae_encoder_func(device)
+    vae_scale_factor = cfg.get('vae_scale_factor', 0.18215)
     # -----------------------------------------------------------
     # 2. Calcolo NLL (Test Loss)
     # -----------------------------------------------------------
-    nll_score = calculate_nll(unet, test_loader, diff_proc, device)
+    nll_score = calculate_nll(unet, test_loader, diff_proc, device, vae_encoder=vae_encoder, vae_scale_factor=vae_scale_factor)
     print(f"Test NLL (Loss): {nll_score:.4f}")
     wandb.log({"test/nll_loss": nll_score})
 
@@ -180,8 +190,7 @@ def main():
             shape=shape,
             device=device,
             labels=labels,
-            callback_fn=cb_fn,    # Passiamo la callback
-            callback_every_n=50   # Log ogni 50 step
+            callback_fn=cb_fn  
         )
         
         # Post-process per metriche

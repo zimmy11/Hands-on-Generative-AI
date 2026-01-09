@@ -34,6 +34,7 @@ def sample_hparams(trial):
         "medium": [128, 256, 512],
         "large":  [256, 512, 1024]
     }
+
     return {
         # Optimization
         "learning_rate": trial.suggest_float("lr", 1e-5, 5e-4, log = True),
@@ -137,6 +138,7 @@ def log_denoising_step_wandb(x_tensor, step, total_steps, caption_prefix="Denois
     """
     # 1. Denormalizza/Clampa le immagini per visualizzazione
     # Assumiamo che il modello lavori in [-1, 1], portiamo a [0, 1]
+    wandb.init()
     x_vis = x_tensor.detach().cpu().clamp(-1.0, 1.0)
     x_vis = (x_vis + 1.0) / 2.0
     

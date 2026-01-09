@@ -83,8 +83,7 @@ class Diffusion_Processes:
         probability_flow: bool = False,
         device: torch.device = None,
         labels: torch.Tensor = None,
-        callback_fn=None,
-        callback_every_n: int = 10
+        callback_fn = None,
     ):
         """
         Reverse diffusion: sample from the data distribution using the learned model.
@@ -231,8 +230,26 @@ class Diffusion_Processes:
 
 
             # ---- log stats + show images every 10% of steps ----
-            if callback_fn is not None and (i % callback_every_n == 0 or i == 0):
-                # Passiamo x, lo step corrente e il totale
+            if callback_fn is not None and (i % k == 0 or i == 0):
+
+
+
+                x_cpu = x.detach().cpu()
+        
+                # discrete statistics
+                mean = x_cpu.mean().item()
+                std = x_cpu.std().item()
+                x_min = x_cpu.min().item()
+                x_max = x_cpu.max().item()
+
+                elapsed_time, start_time = time.time() - start_time, time.time()
+
+                print(
+                f"[reverse step {i+1}/{num_steps} | i={i} | t={t_i[0].item():.4f}]\n"
+                f"mean={mean:.4f}, std={std:.4f}, min={x_min:.4f}, max={x_max:.4f}\n"
+                f"Time of last {k} steps: {elapsed_time}. Time remaining {(k - i//10) * elapsed_time}.\n"
+                )
+                
                 callback_fn(x, i, num_steps)
 
     
