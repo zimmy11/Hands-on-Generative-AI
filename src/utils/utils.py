@@ -1,20 +1,14 @@
 import sys
 import optuna
-from optuna.integration import PyTorchLightningPruningCallback
 import wandb
 import torch
 import torchvision
 from torch.utils.data import DataLoader, random_split
-from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
 import wandb
 # Import all core components from your structured project modules
 from src.utils.sde_utils import * 
 from torchvision import transforms
-from src.data.base_dataset import LatentDataset       # Your custom Dataset class
 from src.training.ldm_module import LDMLightningModule # Your PL module core
-import numpy as np
 from torchvision.datasets import CelebA
 from torchvision import transforms
 #from src.models.unet_model import UNet  # Your custom UNet model
@@ -22,109 +16,6 @@ from src.models.UNet import UNet
 from .vae_utils import get_vae_encoder_func
 from src.models.components import EMAModel
 
-
-def sample_hparams(trial):
-
-    features_key = trial.suggest_categorical(
-        "features", ["small", "medium", "large"]
-    )
-
-    FEATURE_MAP = {
-        "small":  [64, 128, 256],
-        "medium": [128, 256, 512],
-        "large":  [256, 512, 1024]
-    }
-
-    return {
-        # Optimization
-        "learning_rate": trial.suggest_float("lr", 1e-5, 5e-4, log = True),
-        "batch_size": trial.suggest_categorical("batch_size", [1, 2, 4, 8]),
-
-        # Diffusion
-        "sigma_min": trial.suggest_float("sigma_min", 0.01, 0.1, log=True),
-        "sigma_max": trial.suggest_float("sigma_max", 20, 348),
-        "n_timesteps": trial.suggest_categorical("N", [500, 1000, 2000]),
-
-        # UNet
-        "num_blocks": trial.suggest_int("num_blocks", 2, 4),
-        "num_features": FEATURE_MAP[features_key],
-        "embedding_dim": trial.suggest_categorical("emb_dim", [128, 256, 512]), 
-        "image_size":  trial.suggest_categorical("image_size", [32, 64, 128])
-    }
-
-def make_objective(cfg):
-    def objective(trial):
-        wandb.init()
-        h = sample_hparams(trial)
-
-        # --- aggiorna cfg ---
-        cfg.update({
-            "learning_rate": h["learning_rate"],
-            "batch_size": h["batch_size"],
-            "sigma_min": h["sigma_min"],
-            "sigma_max": h["sigma_max"],
-            "N": h["n_timesteps"],
-            "features": h["num_features"],
-            'num_blocks': h['num_blocks']
-        })
-
-        #  training corto = proxy
-        cfg["epochs"] = 10
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        ldm_module, train_loader, val_loader = setup(cfg, device = device , data_path = None)
-
-        self_attention = cfg['self_attention']
-        lr =  cfg['learning_rate']
-        lr_str = str(lr).replace('.', '')
-        N_timesteps = cfg['N']
-        epochs = cfg['epochs']
-
-        hyper_suffix = f"T{N_timesteps}_LR{lr_str}_E{epochs}"
-
-        if self_attention:
-            hyper_suffix += "_SA"
-
-        wandb_logger = WandbLogger(project = "LDM Training",
-        name=f"LDM_{hyper_suffix}", config=cfg)       
-        #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
-        #log_model="all")
-    
-        #wandb_logger.experiment.log({"config_forward": cfg["ForwardConfig"]})
-
-        trainer = Trainer(
-            accelerator="cuda",
-            devices=1,
-            max_epochs=cfg["epochs"],
-            logger=wandb_logger,
-            callbacks=[
-                PyTorchLightningPruningCallback(trial, monitor="val_loss")
-            ],
-            limit_train_batches=1.0,
-            limit_val_batches=1.0,
-            enable_checkpointing=False
-        )
-        try:
-            trainer.fit(ldm_module, train_loader, val_loader)
-
-            # metrics = {}
-            # metrics["val_loss"] = trainer.callback_metrics["val_loss"].item()
-            # metrics["train_loss"] = trainer.callback_metrics["train_loss"].item()
-            # wandb.log(metrics)
-
-            wandb.finish()
-
-            return trainer.callback_metrics["val_loss"].item()
-        
-        except RuntimeError as e:
-            if "out of memory" in str(e):
-                torch.cuda.empty_cache()
-                raise optuna.exceptions.TrialPruned()
-            else:
-                raise e
-
-    return objective
 
 # --- VISUALIZATION FUNCTION ---
 def log_denoising_step_wandb(x_tensor, step, total_steps, caption_prefix="Denoising"):
@@ -198,14 +89,15 @@ def setup(cfg, data_path: str, device: torch.device):
         # full_dataset = torch.utils.data.Subset(full_dataset, indices)
         # Define split sizes
         val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
-        test_size = val_size
-        train_size = len(full_dataset) - val_size - test_size
+        #test_size = val_size
+        train_size = len(full_dataset) - val_size #- test_size
 
         # Deterministic Split for reproducibility
         torch.manual_seed(forward_cfg['seed'])
-        train_dataset, val_dataset, test_dataset = random_split(
-            full_dataset, [train_size, val_size, test_size]
+        train_dataset, val_dataset = random_split(
+            full_dataset, [train_size, val_size]
         )
+        test_dataset = val_dataset 
         # train_dataset = full_dataset
         # val_dataset = full_dataset
         # Create DataLoaders

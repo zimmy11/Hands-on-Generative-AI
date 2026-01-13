@@ -285,8 +285,8 @@ def main():
         max_epochs=epochs,
         # precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback], #, early_stopping],
-        limit_train_batches=0.1, 
-        limit_val_batches=0.1
+        limit_train_batches=0.06, 
+        limit_val_batches=0.06
     )
 
     trainer.fit(ldm_module, train_dataloaders=train_loader, val_dataloaders=val_loader)

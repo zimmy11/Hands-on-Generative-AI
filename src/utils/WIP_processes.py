@@ -84,6 +84,7 @@ class Diffusion_Processes:
         device: torch.device = None,
         labels: torch.Tensor = None,
         callback_fn = None,
+        caption: str = ""
     ):
         """
         Reverse diffusion: sample from the data distribution using the learned model.
@@ -252,36 +253,37 @@ class Diffusion_Processes:
                 
                 callback_fn(x, i, num_steps)
 
-    
-            # if (i % k == 0) or (i < 15):
-            #     x_cpu = x.detach().cpu()
-        
-            #     # discrete statistics
-            #     mean = x_cpu.mean().item()
-            #     std = x_cpu.std().item()
-            #     x_min = x_cpu.min().item()
-            #     x_max = x_cpu.max().item()
-
-            #     elapsed_time, start_time = time.time() - start_time, time.time()
-            #     print(
-            #         f"[reverse step {i+1}/{num_steps} | i={i} | t={t_i[0].item():.4f}]\n"
-            #         f"mean={mean:.4f}, std={std:.4f}, min={x_min:.4f}, max={x_max:.4f}\n"
-            #         f"Time of last {k} steps: {elapsed_time}. Time remaining {(k - i//10) * elapsed_time}.\n"
-            #     )
+            if caption == "debug":
                 
-            #     # visualize a few samples
-            #     # if model works in [-1, 1], map to [0, 1] for display
-            #     x_vis = x_cpu.clamp(-1.0, 1.0)
-            #     x_vis = (x_vis + 1.0) / 2.0
-        
-            #     grid = torchvision.utils.make_grid(x_vis[:16], nrow=4)
-            #     grid = grid.permute(1, 2, 0).numpy()
-        
-            #     plt.figure(figsize=(4, 4))
-            #     plt.imshow(grid)
-            #     plt.title(f"Reverse step {i+1}/{num_steps}")
-            #     plt.axis("off")
-            #     plt.tight_layout()
-            #     plt.show()
+                if (i % k == 0) or (i < 15):
+                    x_cpu = x.detach().cpu()
+            
+                    # discrete statistics
+                    mean = x_cpu.mean().item()
+                    std = x_cpu.std().item()
+                    x_min = x_cpu.min().item()
+                    x_max = x_cpu.max().item()
+
+                    elapsed_time, start_time = time.time() - start_time, time.time()
+                    print(
+                        f"[reverse step {i+1}/{num_steps} | i={i} | t={t_i[0].item():.4f}]\n"
+                        f"mean={mean:.4f}, std={std:.4f}, min={x_min:.4f}, max={x_max:.4f}\n"
+                        f"Time of last {k} steps: {elapsed_time}. Time remaining {(k - i//10) * elapsed_time}.\n"
+                    )
+                    
+                    # visualize a few samples
+                    # if model works in [-1, 1], map to [0, 1] for display
+                    x_vis = x_cpu.clamp(-1.0, 1.0)
+                    x_vis = (x_vis + 1.0) / 2.0
+            
+                    grid = torchvision.utils.make_grid(x_vis[:16], nrow=4)
+                    grid = grid.permute(1, 2, 0).numpy()
+            
+                    plt.figure(figsize=(4, 4))
+                    plt.imshow(grid)
+                    plt.title(f"Reverse step {i+1}/{num_steps}")
+                    plt.axis("off")
+                    plt.tight_layout()
+                    plt.show()
 
         return x

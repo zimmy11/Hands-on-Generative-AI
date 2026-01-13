@@ -4,30 +4,41 @@ from .WIP_processes import Diffusion_Processes
 from .WIP_SDE import VESDE, SubVPSDE, VPSDE
 #from .subVP_forward import ForwardProcess
 
-def calculate_importance_sampling_probabilities(sde_model, N_timesteps, device):
+def calculate_importance_sampling_probabilities(sde_process, N_timesteps, device):
     """
-    Calcola il tensore di probabilità p_IS per l'Importance Sampling.
-    p(t) ∝ g(t)^2 / λ_orig(t)
+    Closed-form version:
+      p_IS(t) ∝ g(t)^2 / λ_orig(t)
+    where (Song-style) λ_orig(t) = std(t)^2 of the marginal.
+
+    - VE:     g^2 = diffusion_coeff(t)^2, λ_orig = sigma_t(t)^2
+    - VP:     g^2 = beta(t),              λ_orig = 1 - exp(-B(t))
+    - subVP:  g^2 = beta(t)*(1-exp(-2B)), λ_orig = (1-exp(-B))^2
     """
-    epsilon = 1e-5 # Per stabilità numerica (evitare divisioni per zero)
-    T_max = 1.0 - epsilon 
+    eps = 1e-5
+    t = torch.linspace(eps, 1.0 - eps, N_timesteps, device=device)
 
-    # 1. Crea il vettore di timestep continui da [eps, 1.0]
-    timesteps = torch.linspace(epsilon, T_max, N_timesteps, device=device)
-    
-    # 2. Calcola i pesi necessari (g(t)^2 e λ_orig(t))
-    g_squared = sde_model.get_g_squared(timesteps)
-    alpha_original = sde_model.get_alpha_original(timesteps) ** 2
-    
-    print(f"G-Squared Max: {torch.max(g_squared)}, Min g^2: {torch.min(g_squared)} Avg. g^2: {torch.mean(g_squared)}, Std. g^2: {torch.std(g_squared)}")
-    print(f"Alpha Squared Max: {torch.max(alpha_original)}, Min alpha: {torch.min(alpha_original)} Avg. alpha: {torch.mean(alpha_original)}, Std. alpha: {torch.std(alpha_original)}")
+    # Compute g^2 and lambda_orig in closed form
+    if isinstance(sde_process.sde, VESDE):
+        g_squared = sde_process.sde.diffusion_coeff(t) ** 2
+        lambda_orig = sde_process.sde.sigma_t(t) ** 2  # std^2
 
-    # 3. Calcola il peso non normalizzato p(t) ∝ g(t)^2 / λ_orig(t)
-    # add epsilon to avoid 0 division
-    sampling_weights = g_squared / (alpha_original + epsilon)
-    
-    # 4. Converting to probabilities
-    probabilities = sampling_weights / torch.sum(sampling_weights)
-    
-    return probabilities
+    elif isinstance(sde_process.sde, VPSDE):
+        # g^2 = beta(t)
+        g_squared = sde_process.sde.beta(t)
+        # std^2 = var(t) = 1 - exp(-B(t))
+        lambda_orig = 1.0 - torch.exp(-sde_process.B(t))
 
+    elif isinstance(sde_process.sde, SubVPSDE):
+        beta_t = sde_process.sde.beta(t)
+        B_t = sde_process.sde.B(t)
+        # g^2 = beta(t) * (1 - exp(-2B(t)))
+        g_squared = beta_t * (1.0 - torch.exp(-2.0 * B_t))
+        # std^2 = var(t) = (1 - exp(-B(t)))^2
+        lambda_orig = (1.0 - torch.exp(-B_t)) ** 2
+
+    else:
+        raise TypeError(f"Unsupported SDE type: {type(sde_process)}")
+
+    weights = g_squared / (lambda_orig + eps)
+    probs = weights / weights.sum()
+    return probs
