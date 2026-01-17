@@ -1,5 +1,5 @@
 import torch
-#from .SDE import VESDE
+#from  import VESDE
 from .WIP_processes import Diffusion_Processes 
 from .WIP_SDE import VESDE, SubVPSDE, VPSDE
 #from .subVP_forward import ForwardProcess
@@ -16,21 +16,21 @@ def calculate_importance_sampling_probabilities(sde_process, N_timesteps, device
     """
     eps = 1e-5
     t = torch.linspace(eps, 1.0 - eps, N_timesteps, device=device)
-
+    
     # Compute g^2 and lambda_orig in closed form
-    if isinstance(sde_process.sde, VESDE):
-        g_squared = sde_process.sde.diffusion_coeff(t) ** 2
-        lambda_orig = sde_process.sde.sigma_t(t) ** 2  # std^2
+    if isinstance(sde_process, VESDE):
+        g_squared = sde_process.diffusion_coeff(t) ** 2
+        lambda_orig = sde_process.sigma_t(t) ** 2  # std^2
 
-    elif isinstance(sde_process.sde, VPSDE):
+    elif isinstance(sde_process, VPSDE):
         # g^2 = beta(t)
-        g_squared = sde_process.sde.beta(t)
+        g_squared = sde_process.beta(t)
         # std^2 = var(t) = 1 - exp(-B(t))
         lambda_orig = 1.0 - torch.exp(-sde_process.B(t))
 
-    elif isinstance(sde_process.sde, SubVPSDE):
-        beta_t = sde_process.sde.beta(t)
-        B_t = sde_process.sde.B(t)
+    elif isinstance(sde_process, SubVPSDE):
+        beta_t = sde_process.beta(t)
+        B_t = sde_process.B(t)
         # g^2 = beta(t) * (1 - exp(-2B(t)))
         g_squared = beta_t * (1.0 - torch.exp(-2.0 * B_t))
         # std^2 = var(t) = (1 - exp(-B(t)))^2

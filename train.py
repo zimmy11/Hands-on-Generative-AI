@@ -81,6 +81,7 @@ def main():
     parser.add_argument('--conditional', type=int)
     parser.add_argument('--num_attributes', type=int)
     parser.add_argument('--cfg_mask_prob', type=str)
+    parser.add_argument('--likelihood-weighting', type=bool)
 
     args = parser.parse_args()
 
@@ -145,7 +146,7 @@ def main():
     attn       = get_param('self_attention', args.self_attention)
     workers    = get_param('num_workers', args.num_workers)
     early_stopping_patience    = get_param('early_stopping_patience', args.early_stopping_patience)
-    likelihood_weighting = get_param('likelihood_weighting', False)
+    likelihood_weighting = get_param('likelihood_weighting', args.likelihood_weighting)
     guidance_scale = get_param('guidance_scale', args.guidance_scale)
     conditional   = get_param('conditional', args.conditional)
     num_attributes = get_param('num_attributes', args.num_attributes)
@@ -202,6 +203,12 @@ def main():
         hyper_suffix += "_SA_CFG"
     if resume_ckpt_cli:
         hyper_suffix += "_RESUME_CFG"
+        
+    if likelihood_weighting:
+        hyper_suffix += "_LW"
+        if use_is:
+            hyper_suffix += "_IS"
+    
 
 
 
@@ -222,15 +229,13 @@ def main():
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=interim_save_dir, 
-        filename=f"ldm-epoch{{epoch:02d}}-val_loss{{val_loss:.4f}}-{timestep_curr}",
+        filename=f"ldm-{hyper_suffix}-epoch{{epoch:02d}}-val_loss{{val_loss:.4f}}-{timestep_curr}",
         monitor='val_loss',
-        mode='min',
-        every_n_epochs=50,
-        save_top_k=1, 
-        save_last=False
+        every_n_epochs=10,
+        save_top_k=-1, 
+        save_last=True
         #save_on_train_epoch_end=True
     )
-
     # 7. Start Training
     print("Starting LDM Training...")
 
@@ -285,8 +290,8 @@ def main():
         max_epochs=epochs,
         # precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback], #, early_stopping],
-        limit_train_batches=0.06, 
-        limit_val_batches=0.06
+        limit_train_batches=0.1, 
+        limit_val_batches=0.1
     )
 
     trainer.fit(ldm_module, train_dataloaders=train_loader, val_dataloaders=val_loader)
@@ -310,8 +315,17 @@ def main():
 
     current_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")        
     actual_epochs = epochs #trainer.current_epoch 
+    
     hyper_suffix = re.sub(r'E\d+', f'E{actual_epochs}', hyper_suffix)
+
+    if use_is:
+        hyper_suffix += "_IS"
+        if likelihood_weighting:
+            hyper_suffix += "_LW"
+    
     hyper_suffix += f"_ts{current_timestamp}"
+
+
 
     final_model_filename = f"{model_type}_final_{hyper_suffix}.pth"
 

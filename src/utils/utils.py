@@ -137,6 +137,8 @@ def setup(cfg, data_path: str, device: torch.device):
     else:
         is_probabilities = torch.ones(forward_cfg['N'], device=device) / forward_cfg['N']
 
+
+    print("Likelihood weighting:", forward_cfg.get('likelihood_weighting', True))
     # D. Prepare Hparams for PL Module & Early Stopping
     hparams = {
         'learning_rate': forward_cfg['learning_rate'],

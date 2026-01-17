@@ -149,7 +149,7 @@ class LDMLightningModule(pl.LightningModule):
         # 6. Likelihood Weighting (λ(t) = g(t)^2)
         if self.likelihood_weighting:
             # For subVP SDE, λ(t) = g(t)^2
-            g_squared_tensor = self.forward_process.sde.get_g_squared(t)
+            g_squared_tensor = self.forward_process.sde.g_squared(t)
             # print(f"5. [WEIGHTING] g(t)^2 shape: {g_squared_tensor.shape}, Stats: Min={g_squared_tensor.min().item():.4f}, Max={g_squared_tensor.max().item():.4f}, Mean={g_squared_tensor.mean().item():.4f}")
             # # Reshape for broadcasting (B, 1, 1, 1)
             weighting_factor = g_squared_tensor[:, None, None, None] 

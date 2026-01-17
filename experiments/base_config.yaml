@@ -49,7 +49,7 @@ self_attention: True     # SELF_ATTENTION (Enable self-attention layers)
 num_workers: 0      
 # Number of CPU workers for the DataLoader (Adjust based on GCP VM size)
 
-likelihood_weighting: False  # Enable likelihood weighting in loss calculation
+likelihood_weighting: True  # Enable likelihood weighting in loss calculation
 # data_path will be passed via the gcloud command line argument, 
 # but a default is included here for local testing consistency.
 data_path: ../data  # Path to the CelebA-HQ dataset
