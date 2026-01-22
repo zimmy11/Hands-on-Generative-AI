@@ -6,6 +6,9 @@ beta_max: 20.0        # Beta schedule maximum (beta_1)
 n_timesteps: 1000      # N value for the diffusion schedule (T=1.0)
 schedule: 'linear'
 seed: 42
+sigma_min: 0.01      # Sigma min for VE SDE
+sigma_max: 50.0      # Sigma max for VE SDE
+
 
 # --- FORWARD PROCESS PARAMETERS
 t_forward: 1.0
@@ -43,13 +46,13 @@ latent_channels: 4          # LATENT_CHANNELS
 image_size: 256             # IMAGE_SIZE (Input pixel size)
 vae_scale_factor: 0.18215   # VAE_SCALE_FACTOR
 vae_factor: 8               # VAE_FACTOR (Downsampling factor of VAE)
-validation_split_ratio: 0.2 # VALIDATION_SPLIT_RATIO
+validation_split_ratio: 0.1 # VALIDATION_SPLIT_RATIO
 self_attention: True     # SELF_ATTENTION (Enable self-attention layers)
 # --- DATA AND RESOURCE CONFIGURATION ---
 num_workers: 0      
 # Number of CPU workers for the DataLoader (Adjust based on GCP VM size)
 
-likelihood_weighting: True  # Enable likelihood weighting in loss calculation
+likelihood_weighting: False  # Enable likelihood weighting in loss calculation
 # data_path will be passed via the gcloud command line argument, 
 # but a default is included here for local testing consistency.
 data_path: ../data  # Path to the CelebA-HQ dataset

@@ -37,15 +37,20 @@ class LDMLightningModule(pl.LightningModule):
         self.n_timesteps = hparams['n_timesteps'] # N for IS calculation
         self.cfg = cfg 
         self.eps = float(cfg['eps'])
+        self.use_ema = cfg.get('use_ema', True)
+        self.dataset_type = hparams.get('dataset_type', 'Celeb')
+        if self.use_ema:
+            self.ema_model = EMAModel(self.unet, decay=hparams.get('ema_decay', 0.9999))
+
         self.likelihood_weighting = cfg.get('likelihood_weighting', True)
         #self.ema_model = hparams['ema']
 
         self.cfg_mask_prob = cfg.get('cfg_mask_prob', 0.1)
 
 
-    def forward(self, x_t, t, labels):
+    def forward(self, x_t, t, labels, cond_mask = None):
         """U-Net prediction of epsilon."""
-        return self.unet(x_t, t, labels)
+        return self.unet(x_t, t, labels, cond_mask)
 
     def _get_weighted_loss(self, batch, is_probabilities: Optional[torch.Tensor] = None):
         """Core logic for sampling, corrupting, predicting, and weighting the loss."""
@@ -63,21 +68,26 @@ class LDMLightningModule(pl.LightningModule):
         # 1. Encode Data (x_0) and Apply VAE Scale Factor
         x_start_latents, labels = batch # Assumes Dataloader yields pixel tensor
         batch_size = x_start_latents.shape[0]
+
+        if self.dataset_type == "MNIST":
+            # Apply class conditioning mask (cfg_mask_prob) 
+            labels = F.one_hot(labels, num_classes=10).float()
+
         num_attributes = labels.shape[1]
+
+
 
         if self.cfg['conditional'] == True:
             p_uncond = self.cfg_mask_prob
-            is_class_cond = torch.rand(size=(batch_size, 1), device=device) >= p_uncond 
-            cond_labels = labels.float() * is_class_cond.float()
+            cond_mask = (torch.rand(batch_size, device=device) >= p_uncond).float()
 
         else:
-            cond_labels = torch.zeros((batch_size, num_attributes), device=device)
+            cond_mask = torch.zeros(batch_size, device=device)
         
         #print(f"1. [INPUT] Pixels Shape: {x_start_latents.shape}")
-
-        with torch.no_grad():
-
-            x_start_latents = self.encode_latents(x_start_latents) * self.vae_scale_factor
+        if self.dataset_type=="Celeb":
+            with torch.no_grad():
+                x_start_latents = self.encode_latents(x_start_latents) * self.vae_scale_factor
 
         #print(f"1. [INPUT] Pixels Shape after encoding: {x_start_latents.shape}")
 
@@ -123,7 +133,7 @@ class LDMLightningModule(pl.LightningModule):
         #print(f"   t Sampled: Min={t.min().item():.4f}, Max={t.max().item():.4f}")
         # 4. Network prediction (epsilon_pred)
         # epsilon_pred = self(x_t, t, y = cond_labels) OLD
-        epsilon_pred = self(x_t, t, cond_labels)
+        epsilon_pred = self(x_t, t, labels, cond_mask=cond_mask)
 
         #score_true_scaled = - epsilon_true
         #print(f"3. [PREDICTION] Epsilon Pred Shape: {epsilon_pred.shape}")
@@ -147,7 +157,7 @@ class LDMLightningModule(pl.LightningModule):
 
 
         # 6. Likelihood Weighting (λ(t) = g(t)^2)
-        if self.likelihood_weighting:
+        if self.likelihood_weighting and self.forward_process.sde_type != 've':
             # For subVP SDE, λ(t) = g(t)^2
             g_squared_tensor = self.forward_process.sde.g_squared(t)
             # print(f"5. [WEIGHTING] g(t)^2 shape: {g_squared_tensor.shape}, Stats: Min={g_squared_tensor.min().item():.4f}, Max={g_squared_tensor.max().item():.4f}, Mean={g_squared_tensor.mean().item():.4f}")
@@ -174,6 +184,8 @@ class LDMLightningModule(pl.LightningModule):
         
         loss, loss_detached = self._get_weighted_loss(batch, is_probabilities = self.hparams.is_probabilities)
         self.log('train_loss', loss_detached, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.ema_model.update(self.unet)
+
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -185,6 +197,10 @@ class LDMLightningModule(pl.LightningModule):
     def configure_optimizers(self):
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
     
+
+
+
+            
     # def on_train_batch_end(self, outputs, batch, batch_idx):
     # # Aggiorna EMA dopo ogni batch
     #     self.global_step += 1

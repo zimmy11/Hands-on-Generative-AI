@@ -6,9 +6,9 @@ import torch.nn.functional as F
 class UNet(nn.Module):
     def __init__(self, 
                  in_channels=4, 
-                 model_channels=32,
+                 model_channels=16,
                  out_channels=4, 
-                 channel_mults=(1, 2, 4, 8),
+                 channel_mults=(1, 2),
                  num_res_blocks=2,
                  dropout=0.0,
                  num_attributes=40):
@@ -26,8 +26,8 @@ class UNet(nn.Module):
         )
 
 
-        # # Null embedding for unconditional case
-        # self.null_embedding = nn.Parameter(torch.zeros(1, num_attributes))
+        # # Null embedding for unconditional case MODIFICA
+        self.null_embedding = nn.Parameter(torch.zeros(1, num_attributes))
 
         # Attribute encoding
         self.attribute_encoder = nn.Sequential(
@@ -35,7 +35,8 @@ class UNet(nn.Module):
             nn.SiLU(),
             nn.Linear(self.time_embed_dim, self.time_embed_dim),
         )
-        
+
+  
         # 2. Input Convolution
         self.input_conv = nn.Conv2d(in_channels, model_channels, kernel_size=3, padding=1)
         
@@ -80,7 +81,7 @@ class UNet(nn.Module):
 
         # 4. Bottleneck (Mid Block)
         self.mid_block1 = ResBlock(current_channels, current_channels, self.time_embed_dim, use_attention=True, dropout=dropout)
-        self.mid_block2 = ResBlock(current_channels, current_channels, self.time_embed_dim, use_attention=False, dropout=dropout)
+        self.mid_block2 = ResBlock(current_channels, current_channels, self.time_embed_dim, use_attention=True, dropout=dropout) # Modficato!!
         
         # 5. Upsampling (Decoder)
         self.up_blocks = nn.ModuleList()
@@ -120,12 +121,16 @@ class UNet(nn.Module):
         self.out_act = nn.SiLU()
         self.out_conv = nn.Conv2d(current_channels, out_channels, kernel_size=3, padding=1)
 
-    def forward(self, x, t, labels = None):
+    def forward(self, x, t, labels = None, cond_mask = None):
         # Time Embedding
         t_emb = self.time_mlp(t)
 
         # Attribute embedding
         y_emb = self.attribute_encoder(labels.float())
+        if cond_mask is not None:
+            null_emb = self.attribute_encoder(self.null_embedding)
+            y_emb = cond_mask[:, None] * y_emb + (1 - cond_mask[:, None]) * null_emb
+        
         cond_emb = t_emb + y_emb
         
         # print(f"[Input] x: {x.shape}, labels: {labels.shape if labels is not None else None}, cond_emb: {cond_emb.shape}")

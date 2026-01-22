@@ -5,9 +5,9 @@ import torch.nn as nn
 import time
 import torchvision.utils
 import matplotlib.pyplot as plt
-
+from src.models.components import EMAModel
 from src.utils.WIP_SDE import SDE, BetaScheduleSDE, SubVPSDE, VESDE, VPSDE
-
+from torch.nn import functional as F
 
 def _expand_batch_vector_to(x: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
     """
@@ -28,9 +28,9 @@ class Diffusion_Processes:
         self.N = cfg["N"]
         self.sde_type = cfg["sde_type"].lower()
         self.conditional = cfg.get("conditional", False)
-        self.num_attributes = cfg.get("num_attributes", 0)
+        self.num_attributes = cfg.get("num_attributes", 40)
         self.guidance_scale = cfg.get("guidance_scale", 1.5)
-
+        self.dataset_type = cfg.get("dataset_type", "Celeb")  # "Celeb" or "MNIST"
         if self.sde_type == "ve":
             # You can pass sigma_min, sigma_max, etc. via cfg if you want
             self.sde: SDE = VESDE(N=self.N)
@@ -84,7 +84,9 @@ class Diffusion_Processes:
         device: torch.device = None,
         labels: torch.Tensor = None,
         callback_fn = None,
-        caption: str = ""
+        caption: str = "", 
+        use_ema: bool = False, 
+        ema_model: nn.Module = None
     ):
         """
         Reverse diffusion: sample from the data distribution using the learned model.
@@ -167,6 +169,12 @@ class Diffusion_Processes:
 
         #     return score
 
+        if use_ema and ema_model is not None:
+            print("Using EMA model for reverse process.")
+            model = ema_model.to(device)
+            model.eval()
+
+            
         def score_fn(x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
             """
             Computes the score using two separate passes for CFG.
@@ -175,11 +183,15 @@ class Diffusion_Processes:
 
             if self.conditional:
                 # 1. Conditioned Pass
-                eps_cond =  model(x, t, labels)
+                if self.dataset_type == "MNIST" and labels.dim()==1:
+                    labels = F.one_hot(labels, num_classes=self.num_attributes).float()
+                
+                cond_mask = torch.ones(B, device=device)
+                eps_cond =  model(x, t, labels, cond_mask=cond_mask)
                 
                 # 2. Unconditioned Pass
-                null_labels = torch.zeros((x.size(0), self.num_attributes), device=device)
-                eps_uncond = model(x, t, null_labels)
+                uncond_mask = torch.zeros(B, device=device)
+                eps_uncond = model(x, t, labels, cond_mask=uncond_mask)
                 
                 # 3. Classifier-Free Guidance Extrapolation
                 eps_cfg = eps_uncond + self.guidance_scale * (eps_cond - eps_uncond)
@@ -189,19 +201,15 @@ class Diffusion_Processes:
             else:
                 # Standard unconditioned pass
                 print("Performing unconditioned pass. Score fn.")
-
-                null_labels = torch.zeros((x.size(0), self.num_attributes), device=device)
-                eps_cfg = model(x, t, null_labels)
+                uncond_mask = torch.zeros(B, device=device)
+                eps_cfg = model(x, t, labels, cond_mask=uncond_mask)
 
             # 4. Get marginal std for score conversion
             _, std = self.sde.marginal_prob(x, t)
             std = std.view(*std.shape, *([1] * (x.dim() - 1)))
             
             # 5. Convert Output to Score
-            if self.sde_type == "ve":
-                score = eps_cfg / (std + 1e-6)
-            else:
-                score = -eps_cfg / (std + 1e-6)
+            score = -eps_cfg / (std + 1e-6)
 
             return score
 
@@ -216,7 +224,7 @@ class Diffusion_Processes:
         start_time = time.time()
         
         # Time discretization from T -> 0
-        for i in reversed(range(num_steps)):
+        for i in reversed(range(2, num_steps)):
             t_i = torch.full((B,), T * i / num_steps, device=device)
             f, G = rsde.discretize(x, t_i, labels)  # f: (B, ...), G: (B,)
 

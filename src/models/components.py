@@ -193,6 +193,6 @@ class EMAModel(nn.Module):
             # Update in-place per velocità
             ema_param.data.mul_(self.decay).add_(current_param.data, alpha=1 - self.decay)
 
-    def forward(self, x, t):
+    def forward(self, x, t, labels=None):
         """Pass-through per usare l'EMA come un modello normale"""
-        return self.ema_model(x, t)
+        return self.ema_model(x, t, labels=labels)

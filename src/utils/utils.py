@@ -68,61 +68,103 @@ def setup(cfg, data_path: str, device: torch.device):
 
     forward_cfg = cfg
     
+    
     try:
-
-        #full_dataset = LatentDataset(data_dir=data_path, image_size=forward_cfg['image_size'])
+        dataset_type = forward_cfg.get('dataset_type', 'Celeb')
         image_size = forward_cfg['image_size']
-        transform = transforms.Compose([transforms.CenterCrop(178), transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize([0.5]*3, [0.5]*3)])
 
-        full_dataset = CelebA(
-            root=data_path,
-            # root = data_path
-            split="train",
-            target_type="attr",
-            transform=transform,
-            download=False   
-        )
-        print("CelebA dataset loaded successfully.")
+        if dataset_type == "Celeb":
+            print("Loading CelebA dataset...")
 
+            transform = transforms.Compose([transforms.CenterCrop(178), transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize([0.5]*3, [0.5]*3)])
 
-        # indices = [0] * 128  # Example indices for a small subset
-        # full_dataset = torch.utils.data.Subset(full_dataset, indices)
-        # Define split sizes
-        val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
-        #test_size = val_size
-        train_size = len(full_dataset) - val_size #- test_size
+            full_dataset = CelebA(
+                root=data_path,
+                # root = data_path
+                split="train",
+                target_type="attr",
+                transform=transform,
+                download=False   
+            )
+            print("CelebA dataset loaded successfully.")
 
-        # Deterministic Split for reproducibility
-        torch.manual_seed(forward_cfg['seed'])
-        train_dataset, val_dataset = random_split(
-            full_dataset, [train_size, val_size]
-        )
-        test_dataset = val_dataset 
-        # train_dataset = full_dataset
-        # val_dataset = full_dataset
-        # Create DataLoaders
+            val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
+            test_size = val_size
+            train_size = len(full_dataset) - val_size - test_size
 
+            # Deterministic Split for reproducibility
+            torch.manual_seed(forward_cfg['seed'])
+            train_dataset, val_dataset, test_dataset = random_split(
+                full_dataset, [train_size, val_size, test_size]
+            )
 
-        train_loader = DataLoader(train_dataset, batch_size=forward_cfg['batch_size'], shuffle=True, num_workers=forward_cfg['num_workers'])# CHange Batch size
-        val_loader = DataLoader(val_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers']) # Change Batch size
-        test_loader = DataLoader(test_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers']) # Change Batch size
+            # Create DataLoaders
+            train_loader = DataLoader(train_dataset, batch_size=forward_cfg['batch_size'], shuffle=True, num_workers=forward_cfg['num_workers'])# CHange Batch size
+            val_loader = DataLoader(val_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers']) # Change Batch size
+            test_loader = DataLoader(test_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers']) # Change Batch size
+            print(f"Dataset loaded: Total {len(full_dataset)} images.")
+            print(f" -> Train Loader: {len(train_dataset)} images.")
 
 
-        print(f"Dataset loaded: Total {len(full_dataset)} images.")
-        print(f" -> Train Loader: {len(train_dataset)} images.")
 
+        else:
+            print("Loading MNIST dataset...")
+
+            transform = transforms.Compose([transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize([0.5], [0.5])])
+
+            train_full = torchvision.datasets.MNIST(
+                root=data_path,
+                train=True,
+                transform=transform,
+                download=False   
+            )
+
+            test_dataset = torchvision.datasets.MNIST(
+                root=data_path,
+                train=False,
+                transform=transform,
+                download=False   
+            )
+            print("MNIST dataset loaded successfully.")
+
+            val_ratio = forward_cfg['validation_split_ratio']  # es. 0.1
+
+            val_size = int(val_ratio * len(train_full))
+            train_size = len(train_full) - val_size
+
+            generator = torch.Generator().manual_seed(forward_cfg['seed'])
+
+            train_dataset, val_dataset = random_split(
+                train_full,
+                [train_size, val_size],
+                generator=generator
+            )
+            train_loader = DataLoader(train_dataset, batch_size=forward_cfg['batch_size'], shuffle=True, num_workers=forward_cfg['num_workers'])
+            val_loader   = DataLoader(val_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers'])
+            test_loader  = DataLoader(test_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers'])
+            print(f"Dataset loaded: Total {len(train_full   )} images.")
+            print(f" -> Train Loader: {len(train_dataset)} images.")
+
+    
+        
     except Exception as e:
         print(f"ERROR: Could not load data from {data_path}. Check path and dataset class. {e}")
         sys.exit(1)
 
     # B. Model and Diffusion Setup
-    unet_model = UNet(in_channels=forward_cfg['latent_channels']).to(device)#, out_channels=forward_cfg['latent_channels'], features=forward_cfg['features'], ).to(device)
+    unet_model = UNet(in_channels=forward_cfg['latent_channels'], out_channels=forward_cfg['latent_channels'], num_attributes=forward_cfg['num_attributes']).to(device)#, out_channels=forward_cfg['latent_channels'], features=forward_cfg['features'], ).to(device)
     vae_encoder_func, vae_decoder_func = get_vae_encoder_func(device) # VAE Encoder function
     ema_model = EMAModel(unet_model).to(device)
 
     # Initialize ForwardProcess (contains the subVP_SDE instance)
     forward_process = Diffusion_Processes(forward_cfg)
-    sde = SubVPSDE(beta_max=forward_cfg['beta_max'], beta_min=forward_cfg['beta_min'], N=forward_cfg['N'])
+
+    if forward_cfg['sde_type'] == 'subVP':
+        sde = SubVPSDE(beta_max=forward_cfg['beta_max'], beta_min=forward_cfg['beta_min'], N=forward_cfg['N'])
+    elif forward_cfg['sde_type'] == 'vp':
+        sde = VPSDE(beta_max=forward_cfg['beta_max'], beta_min=forward_cfg['beta_min'], N=forward_cfg['N'])
+    else:
+        sde = VESDE(sigma_min=forward_cfg['sigma_min'], sigma_max=forward_cfg['sigma_max'], N=forward_cfg['N'])
 
     # C. Importance Sampling Calculation (IS)
     is_probabilities = None
@@ -148,7 +190,8 @@ def setup(cfg, data_path: str, device: torch.device):
         'batch_size': forward_cfg['batch_size'],
         'data_path': data_path, 
         'ema': ema_model , 
-        'likelihood_weighting': forward_cfg.get('likelihood_weighting', True)
+        'likelihood_weighting': forward_cfg.get('likelihood_weighting', True), 
+        'dataset_type': dataset_type
     }
 
 

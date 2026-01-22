@@ -76,12 +76,15 @@ def main():
     parser.add_argument('--num-workers', type=int)
     parser.add_argument('--early-stopping-patience', type=int)
     parser.add_argument('--sde-type', type=str)
+    parser.add_argument('--sigma_min', type=float)
+    parser.add_argument('--sigma_max', type=float)
 
     parser.add_argument('--guidance-scale', type=bool)
     parser.add_argument('--conditional', type=int)
     parser.add_argument('--num_attributes', type=int)
     parser.add_argument('--cfg_mask_prob', type=str)
     parser.add_argument('--likelihood-weighting', type=bool)
+    parser.add_argument('--dataset-type', choices = ["Celeb", "MNIST"], help = "Type of dataset to use for training/testing.")
 
     args = parser.parse_args()
 
@@ -115,6 +118,8 @@ def main():
 
     beta_min   = get_param('beta_min', args.beta_min)
     beta_max   = get_param('beta_max', args.beta_max)
+    sigma_min  = get_param('sigma_min', args.sigma_min)
+    sigma_max  = get_param('sigma_max', args.sigma_max)
     N_timesteps = get_param('n_timesteps', args.n_timesteps)
     schedule   = get_param('schedule', args.schedule)
     seed       = get_param('seed', args.seed)
@@ -123,13 +128,12 @@ def main():
     final      = get_param('final', args.final)
     eps        = get_param('eps', args.eps)
     closed_formula = get_param('closed_formula', args.closed_formula)
-    sde_type    = get_param('sde_type', args.sde_type)
+    sde_type    = get_param('sde-type', args.sde_type)
     t_0        = get_param('t_0', args.t0)
     t_1        = get_param('t_1', args.t1)
     corrector  = get_param('corrector', args.corrector)
     n_corr     = get_param('n_corr', args.n_corr)
     target_snr = get_param('target_snr', args.target_snr)
-    rev_type   = get_param('rev_type', args.rev_type)
 
     epochs     = get_param('epochs', args.epochs)
     lr         = get_param('learning_rate', args.learning_rate)
@@ -151,7 +155,8 @@ def main():
     conditional   = get_param('conditional', args.conditional)
     num_attributes = get_param('num_attributes', args.num_attributes)
     cfg_mask_prob  = get_param('cfg_mask_prob', args.cfg_mask_prob)
-    
+    dataset_type  = get_param('dataset_type', args.dataset_type)
+
     latent_h = image_size // vae_factor
     latent_w = image_size // vae_factor
 
@@ -186,7 +191,10 @@ def main():
         'beta_max': beta_max,
         'use_importance_sampling': use_is,
         'eps': eps, 
-        'likelihood_weighting': likelihood_weighting
+        'likelihood_weighting': likelihood_weighting, 
+        'dataset_type': dataset_type,
+        'sigma_min': sigma_min,
+        'sigma_max': sigma_max
         }
     
     
@@ -290,8 +298,8 @@ def main():
         max_epochs=epochs,
         # precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
         callbacks=[checkpoint_callback], #, early_stopping],
-        limit_train_batches=0.1, 
-        limit_val_batches=0.1
+        limit_train_batches=1.0, 
+        limit_val_batches=1.0
     )
 
     trainer.fit(ldm_module, train_dataloaders=train_loader, val_dataloaders=val_loader)
@@ -332,7 +340,7 @@ def main():
     # Ensure the final save directory exists
     os.makedirs(final_save_dir, exist_ok=True)
     final_model_path = os.path.join(final_save_dir, final_model_filename)
-    torch.save({'state_dict': ldm_module.state_dict()}, final_model_path)
+    torch.save({'state_dict': ldm_module.state_dict(), 'ema_model': ldm_module.ema_model.state_dict()}, final_model_path)
     print(f"\n[FINAL SAVE] Final weights saved to: {final_model_path}")
 
     if _downloaded_tmp_ckpt and os.path.exists(_downloaded_tmp_ckpt):
@@ -346,3 +354,4 @@ def main():
 if __name__ == "__main__":
     main()
     #python -m train --data-path="./data" --epochs=30
+    #python -m train --data-path="./data" --epochs=5 --dataset-type="MNIST" --num_attributes=10
