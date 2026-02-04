@@ -46,21 +46,14 @@ class UNet(nn.Module):
         # Skip connections storage logic
         self.skips_config = [] 
         
-        # Risoluzione iniziale fittizia (assumendo input 64x64 o simile)
-        # Per semplicità, decidiamo l'attenzione basandoci sui livelli
         
         # We do not need to concatenate in self.down_blocks also the self.attributes because they are passed later in the forwards
         ds = 1
         for level, mult in enumerate(channel_mults):
             out_ch = model_channels * mult
             for _ in range(num_res_blocks):
-                # Check se serve attenzione a questo livello (logica semplificata basata sui canali o risoluzione)
-                # In Song et al, l'attenzione è spesso a 16x16. 
-                # Se l'input è 32x32: Level 0 (32), Level 1 (16) -> Attn qui, Level 2 (8).
-                #is_attn = (ds in [2, 4]) # Esempio: applica attn dopo 1 o 2 downsamples
-                # Nota: Per precisione assoluta, dovremmo tracciare la risoluzione attuale (H, W).
-                # Qui attivo l'attenzione sull'ultimo blocco se 'mult' è alto, stile DDPM.
-                is_attn = (level >= len(channel_mults) - 2) # Attenzione sugli strati profondi (bassa ris)
+
+                is_attn = (level >= len(channel_mults) - 2) 
                 
                 self.down_blocks.append(ResBlock(
                     in_channels=current_channels,
@@ -73,10 +66,9 @@ class UNet(nn.Module):
                 current_channels = out_ch
 
                 
-            # Downsample (eccetto ultimo livello)
+            # Downsample 
             if level != len(channel_mults) - 1:
                 self.down_blocks.append(nn.Conv2d(current_channels, current_channels, 3, stride=2, padding=1))
-                #self.skips_config.append(current_channels)
                 ds *= 2
 
         # 4. Bottleneck (Mid Block)
@@ -85,21 +77,16 @@ class UNet(nn.Module):
         
         # 5. Upsampling (Decoder)
         self.up_blocks = nn.ModuleList()
-        # Invertiamo i channel mults per risalire
         reversed_mults = list(reversed(channel_mults))
         
         for level, mult in enumerate(reversed_mults):
             out_ch = model_channels * mult
             
-            # Upsample block (ResBlocks + Upsample layer)
-            # In DDPM, per ogni livello di down ci sono solitamente 'num_res_blocks' + 1 nel decoder
-            # a causa della concatenazione degli skip.
             
             for _ in range(num_res_blocks):
-                # Recuperiamo canali skip
                 skip_ch = self.skips_config.pop()
                 
-                is_attn = (level <= 1) # Attenzione sugli strati profondi (bassa ris)
+                is_attn = (level <= 1) 
                 
                 # Input channels = current + skip
                 self.up_blocks.append(ResBlock(
@@ -111,7 +98,7 @@ class UNet(nn.Module):
                 ))
                 current_channels = out_ch
                 
-            # Upsample (eccetto ultimo livello)
+            # Upsample 
             if level != len(channel_mults) - 1:
                 self.up_blocks.append(nn.Upsample(scale_factor=2, mode='nearest'))
                 ds //= 2
@@ -132,9 +119,6 @@ class UNet(nn.Module):
             y_emb = cond_mask[:, None] * y_emb + (1 - cond_mask[:, None]) * null_emb
         
         cond_emb = t_emb + y_emb
-        
-        # print(f"[Input] x: {x.shape}, labels: {labels.shape if labels is not None else None}, cond_emb: {cond_emb.shape}")
-
 
         # Initial Conv
         x = self.input_conv(x)
@@ -147,46 +131,36 @@ class UNet(nn.Module):
             if isinstance(layer, ResBlock):
                 x = layer(x, cond_emb)
                 skips.append(x)
-                # print(f"[Encoder ResBlock {i}] x: {x.shape}, saved skip: {x.shape}")
 
             else: # Downsample Conv
                 x = layer(x)
-                #skips.append(x)
-                # print(f"[Downsample conv {i}] x: {x.shape} (skip not saved)")
 
-        # print(f"Bottleneck In: {x.shape}")
         
         # --- Bottleneck ---
         x = self.mid_block1(x, cond_emb)
         x = self.mid_block2(x, cond_emb)
         
-        # print(f"Bottleneck Out: {x.shape}")
         
         # --- Decoder ---
         for i, layer in enumerate(self.up_blocks):
             if isinstance(layer, ResBlock):
-                # Recupera skip
+                # Recover skip
                 skip = skips.pop()
                 
-                # Check dimension mismatch (può capitare con input non potenze di 2)
                 if x.shape[-2:] != skip.shape[-2:]:
                     x = F.interpolate(x, size=skip.shape[-2:], mode='bilinear', align_corners=False)
-                    # print(f"[Upsample interp {i}] x resized to {skip.shape[-2:]}")
 
                 x = torch.cat([x, skip], dim=1)
-                # print(f"[Decoder ResBlock {i}] x concat skip: {x.shape}")
 
                 x = layer(x, cond_emb)
             else: # Upsample
                 x = layer(x)
-                # print(f"[Upsample {i}] x: {x.shape}")
 
 
         # Final
         x = self.out_norm(x)
         x = self.out_act(x)
         x = self.out_conv(x)
-        # print(f"[Output] x: {x.shape}")
 
         
         return x
