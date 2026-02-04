@@ -10,38 +10,34 @@ from pytorch_lightning.loggers import WandbLogger
 import wandb
 import re
 from datetime import datetime
-# Import all core components from your structured project modules
+
+# Import project utilities
 from src.utils.sde_utils import * 
 # from src.utils.subVP_forward import ForwardProcess   # Forward process with subVP_SDE
 from src.utils.utils import setup
 
 
-
 def extract_epoch_from_filename(ckpt_filename: str) -> int:
     """
-    Estrae l'ultima epoch da un filename tipo:
-    'LDM_final_T1000_LR00001_E24_SA_ts20251125_144930.pth'
+    Extracts the last epoch number from a checkpoint filename.
+    Example filename: 'LDM_final_T1000_LR00001_E24_SA_ts20251125_144930.pth'
     """
     match = re.search(r'_E(\d+)', ckpt_filename)
     if match:
         return int(match.group(1))
-    else:
-        return 0
+    return 0
 
 
-
-# --- MAIN EXECUTION FUNCTION ---
 def main():
-
-    #wandb.login(key="3f785a5ef6c94fac05a13ed4a58965545976c05b")
-    # 1. Argument Parsing (Used for GCP Vertex AI Custom Job configuration)
+    # ---------------------------
+    # 1. Argument Parsing
+    # ---------------------------
     parser = argparse.ArgumentParser(description="PyTorch Lightning LDM Training")
-    parser.add_argument('--data-path', type=str, required=True, help='Path to the dataset directory (GCS for cloud training).')
-    parser.add_argument('--config-path', type=str, default='./experiments/base_config.yaml', help='Path to the YAML config file.')
-    parser.add_argument('--resume-checkpoint', type=str, default=None,
-                    help='Path to checkpoint file to resume from. Accepts local path or gs://bucket/path/file.(ckpt|pth|pt)')
-    
-    # Override parameters from command line if provided
+    parser.add_argument('--data-path', type=str, required=True, help='Path to dataset directory (GCS for cloud training).')
+    parser.add_argument('--config-path', type=str, default='./experiments/base_config.yaml', help='Path to YAML config file.')
+    parser.add_argument('--resume-checkpoint', type=str, default=None, help='Checkpoint to resume from (.ckpt/.pth/.pt)')
+
+    # Optional overrides from CLI
     parser.add_argument('--beta-min', type=float)
     parser.add_argument('--beta-max', type=float)
     parser.add_argument('--n-timesteps', type=int)
@@ -84,38 +80,32 @@ def main():
     parser.add_argument('--num_attributes', type=int)
     parser.add_argument('--cfg_mask_prob', type=str)
     parser.add_argument('--likelihood-weighting', type=bool)
-    parser.add_argument('--dataset-type', choices = ["Celeb", "MNIST"], help = "Type of dataset to use for training/testing.")
+    parser.add_argument('--dataset-type', choices=["Celeb", "MNIST"], help="Dataset type for training/testing.")
 
     args = parser.parse_args()
 
     # ---------------------------
-    # 2. Load YAML config
-    # ---------------------------    
-    
-    # Loading the configuraitons
+    # 2. Load YAML configuration
+    # ---------------------------
     torch.set_float32_matmul_precision('medium')
-    
+
     print(f"Loading configuration from: {args.config_path}")
-    config_path = args.config_path
-    with open(config_path, 'r') as f:
+    with open(args.config_path, 'r') as f:
         yaml_config = yaml.safe_load(f)
 
-    resume_ckpt_cli = args.resume_checkpoint
     resume_ckpt_local = None
-    _downloaded_tmp_ckpt = None
-
-    if resume_ckpt_cli:
-        print(f"[INFO] resume-checkpoint provided: {resume_ckpt_cli}")
-
-        if not os.path.exists(resume_ckpt_cli):
-            print(f"[ERROR] resume checkpoint not found at local path: {resume_ckpt_cli}")
+    if args.resume_checkpoint:
+        print(f"[INFO] Resume checkpoint provided: {args.resume_checkpoint}")
+        if not os.path.exists(args.resume_checkpoint):
+            print(f"[ERROR] Checkpoint not found at: {args.resume_checkpoint}")
             sys.exit(1)
-        resume_ckpt_local = resume_ckpt_cli
+        resume_ckpt_local = args.resume_checkpoint
 
-
+    # Helper: get CLI param or YAML default
     def get_param(key, cli_value):
         return cli_value if cli_value is not None else yaml_config.get(key)
 
+    # Extract config parameters
     beta_min   = get_param('beta_min', args.beta_min)
     beta_max   = get_param('beta_max', args.beta_max)
     sigma_min  = get_param('sigma_min', args.sigma_min)
@@ -149,7 +139,7 @@ def main():
     feats      = get_param('features', args.features)
     attn       = get_param('self_attention', args.self_attention)
     workers    = get_param('num_workers', args.num_workers)
-    early_stopping_patience    = get_param('early_stopping_patience', args.early_stopping_patience)
+    early_stopping_patience = get_param('early_stopping_patience', args.early_stopping_patience)
     likelihood_weighting = get_param('likelihood_weighting', args.likelihood_weighting)
     guidance_scale = get_param('guidance_scale', args.guidance_scale)
     conditional   = get_param('conditional', args.conditional)
@@ -157,12 +147,12 @@ def main():
     cfg_mask_prob  = get_param('cfg_mask_prob', args.cfg_mask_prob)
     dataset_type  = get_param('dataset_type', args.dataset_type)
 
+    # Compute latent spatial dimensions
     latent_h = image_size // vae_factor
     latent_w = image_size // vae_factor
-
-    # Create the Shape Tuple (B, C, H, W)
     current_shape = (batch_size, latent_ch, latent_h, latent_w)
-    # 3. Device Setup
+
+    # Device setup
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_path = args.data_path
 
@@ -195,163 +185,115 @@ def main():
         'dataset_type': dataset_type,
         'sigma_min': sigma_min,
         'sigma_max': sigma_max
-        }
-    
-    
+    }
 
-    # 4. Initialize Modules and DataLoaders
+    # ---------------------------
+    # 3. Initialize model and dataloaders
+    # ---------------------------
     ldm_module, train_loader, val_loader, test_loader = setup(cfg, data_path, device)
-    
-    # --- W&B and Logging Setup ---
-    self_attention = cfg['self_attention']
+
+    # ---------------------------
+    # 4. Logging & WandB setup
+    # ---------------------------
     lr_str = str(lr).replace('.', '')
     hyper_suffix = f"T{N_timesteps}_LR{lr_str}_E{epochs}"
-
-    if self_attention:
+    if attn:
         hyper_suffix += "_SA_CFG"
-    if resume_ckpt_cli:
+    if resume_ckpt_local:
         hyper_suffix += "_RESUME_CFG"
-        
     if likelihood_weighting:
         hyper_suffix += "_LW"
         if use_is:
             hyper_suffix += "_IS"
-    
 
+    wandb_logger = WandbLogger(
+        project="LDM Training",
+        name=f"{model_type}_{hyper_suffix}",
+        config=cfg
+    )
 
-
-    # The WandbLogger integrates logging with the PL Trainer
-    wandb_logger = WandbLogger(project = "LDM Training",
-        name=f"{model_type}_{hyper_suffix}", config=cfg)       
-        #project=os.getenv("WANDB_PROJECT", "LDM Training"), 
-        #log_model="all")
-    
-    # wandb_logger.experiment.log({"config_forward": cfg["ForwardConfig"]})
-
-    # 6. Checkpoint Callback (Saves model states)
-    # AIP_MODEL_DIR is the standard Vertex AI output path (e.g., gs://bucket/output_ldm_pl/)
+    # ---------------------------
+    # 5. Checkpoint callback
+    # ---------------------------
     checkpoint_path = os.getenv("AIP_MODEL_DIR", './checkpoints/')
     interim_save_dir = os.path.join(checkpoint_path, 'interim')
     os.makedirs(interim_save_dir, exist_ok=True)
     timestep_curr = datetime.now().strftime("%H%M%S")
 
     checkpoint_callback = ModelCheckpoint(
-        dirpath=interim_save_dir, 
+        dirpath=interim_save_dir,
         filename=f"ldm-{hyper_suffix}-epoch{{epoch:02d}}-val_loss{{val_loss:.4f}}-{timestep_curr}",
         monitor='val_loss',
         every_n_epochs=10,
-        save_top_k=-1, 
+        save_top_k=-1,
         save_last=True
-        #save_on_train_epoch_end=True
     )
-    # 7. Start Training
-    print("Starting LDM Training...")
 
+    # ---------------------------
+    # 6. Resume checkpoint handling
+    # ---------------------------
     ckpt_path_for_trainer = None
-
     if resume_ckpt_local:
         last_epoch_done = extract_epoch_from_filename(os.path.basename(resume_ckpt_local))
-
         print(f"[INFO] Preparing to resume from checkpoint: {resume_ckpt_local}")
-        # Proviamo a caricare il file e vedere se contiene 'state_dict' (tipico .pth salvati manualmente)
         try:
             ckpt_dict = torch.load(resume_ckpt_local, map_location="cpu")
-            # Se è un dict con 'state_dict' (tipico salvataggio manuale {'state_dict': model.state_dict()})
             if isinstance(ckpt_dict, dict) and 'state_dict' in ckpt_dict:
-                print("[INFO] Found 'state_dict' in checkpoint — loading into LightningModule...")
                 ldm_module.load_state_dict(ckpt_dict['state_dict'], strict=False)
-                # non passiamo ckpt_path al trainer (già caricato nello stato del model)
                 ckpt_path_for_trainer = None
             else:
-                # Potrebbe essere un full Lightning checkpoint (.ckpt) o uno state_dict puro
-                # Se sembra un Lightning checkpoint (contiene 'pytorch-lightning_version' o 'optimizer_states'), usalo come ckpt_path
-                if isinstance(ckpt_dict, dict) and ('pytorch-lightning_version' in ckpt_dict or 'optimizer_states' in ckpt_dict):
-                    print("[INFO] Detected Lightning checkpoint — will resume via trainer.ckpt_path")
-                    ckpt_path_for_trainer = resume_ckpt_local
-                else:
-                    try:
-                        ldm_module.load_state_dict(ckpt_dict, strict=False)
-                        print("[INFO] Loaded checkpoint as model state_dict.")
-                        ckpt_path_for_trainer = None
-                    except Exception as e:
-                        print(f"[WARNING] Could not auto-load checkpoint into model: {e}")
-                        # fallback: pass path to trainer (Trainer proverà a gestire .ckpt)
-                        ckpt_path_for_trainer = resume_ckpt_local
+                ckpt_path_for_trainer = resume_ckpt_local
         except Exception as e:
-            # se torch.load fallisce, proviamo a passare il path direttamente al trainer
             print(f"[WARNING] torch.load failed on {resume_ckpt_local}: {e}")
             ckpt_path_for_trainer = resume_ckpt_local
         total_epochs = args.epochs if args.epochs else cfg['epochs']
         remaining_epochs = max(total_epochs - last_epoch_done, 0)
         print(f"[INFO] Trainer will run {remaining_epochs} additional epochs.")
-
-    else: 
+    else:
         remaining_epochs = args.epochs if args.epochs else cfg['ForwardConfig']['epochs']
-   
+
+    # ---------------------------
+    # 7. Initialize Trainer
+    # ---------------------------
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
-    # 8. Initialize Trainer (Optimized for T4/GCP Cost Saving)
     trainer = Trainer(
         logger=wandb_logger,
-        accelerator=device_str, #'cpu' or 'cuda'
-        devices="auto",                      # Use 1 T4 GPU
-        # accumulate_grad_batches=2,
+        accelerator=device_str,
+        devices="auto",
         max_epochs=epochs,
-        # precision="16-mixed",           # CRUCIAL: Enables Mixed Precision for speed and VRAM savings on T4
-        callbacks=[checkpoint_callback], #, early_stopping],
-        limit_train_batches=1.0, 
+        callbacks=[checkpoint_callback],
+        limit_train_batches=1.0,
         limit_val_batches=1.0
     )
 
+    # ---------------------------
+    # 8. Start training
+    # ---------------------------
+    print("Starting LDM Training...")
     trainer.fit(ldm_module, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
-#     study = optuna.create_study(
-#     direction="minimize",
-#     sampler=optuna.samplers.TPESampler(),
-#     pruner=optuna.pruners.MedianPruner(n_warmup_steps=2)
-# )
-
-#     study.optimize(make_objective(cfg), n_trials=10)
-#     print("BEST TRIAL:")
-#     print(study.best_trial.value)
-#     print(study.best_trial.params)
-        
-    # 9. Cleanup
+    # ---------------------------
+    # 9. Final model save
+    # ---------------------------
     wandb.finish()
-
     final_save_dir = os.path.join(checkpoint_path, 'weights')
-
+    os.makedirs(final_save_dir, exist_ok=True)
 
     current_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")        
-    actual_epochs = epochs #trainer.current_epoch 
-    
+    actual_epochs = epochs
     hyper_suffix = re.sub(r'E\d+', f'E{actual_epochs}', hyper_suffix)
-
     if use_is:
         hyper_suffix += "_IS"
         if likelihood_weighting:
             hyper_suffix += "_LW"
-    
     hyper_suffix += f"_ts{current_timestamp}"
 
-
-
     final_model_filename = f"{model_type}_final_{hyper_suffix}.pth"
-
-    # Ensure the final save directory exists
-    os.makedirs(final_save_dir, exist_ok=True)
     final_model_path = os.path.join(final_save_dir, final_model_filename)
+
     torch.save({'state_dict': ldm_module.state_dict(), 'ema_model': ldm_module.ema_model.state_dict()}, final_model_path)
     print(f"\n[FINAL SAVE] Final weights saved to: {final_model_path}")
-
-    if _downloaded_tmp_ckpt and os.path.exists(_downloaded_tmp_ckpt):
-        try:
-            os.remove(_downloaded_tmp_ckpt)
-            print(f"[INFO] removed temporary checkpoint file {_downloaded_tmp_ckpt}")
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":
     main()
-    #python -m train --data-path="./data" --epochs=30
-    #python -m train --data-path="./data" --epochs=5 --dataset-type="MNIST" --num_attributes=10

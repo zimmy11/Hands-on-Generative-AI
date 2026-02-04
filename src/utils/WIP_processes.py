@@ -107,16 +107,7 @@ class Diffusion_Processes:
         if num_steps is None:
             num_steps = self.N
 
-        # # --- FIX: Check if model is a function or a class ---
-        # if device is None:
-        #     if hasattr(model, "parameters"):
-        #         # It's a real PyTorch model
-        #         device = next(model.parameters()).device
-        #     else:
-        #         # It's a function (wrapper), so we assume CUDA or CPU
-        #         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        #next(model.parameters()).device
+ 
         B = shape[0]
         T = self.sde.T
         print("----- Reverse Process -----")
@@ -124,50 +115,6 @@ class Diffusion_Processes:
         print(f"This is our SDE: {self.sde}")
         print(f"This is the value of T: {T}")
 
-        # Concatenation with double passing for classifier-free guidance (only one passage in the model)
-        # def score_fn(x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
-        #     """
-        #     Computes the score using the pre-trained model.
-        #     Handles the mapping from continuous SDE time t to model-specific inputs.
-        #     """
-        #     if self.conditional:
-        #         null_y = torch.zero_like(labels) # remember to keep the same dimensions as lebels
-        #         x_combined = torch.cat([x,x], dim=0)
-        #         t_combined = torch.cat([t,t], dim=0)
-        #         labels_combined = torch.cat([labels, null_y], dim=0)
-        #     else:
-        #         x_combined = x
-        #         t_combined = t
-        #         labels_combined = None
-
-        #     # 1. Get the marginal std (sigma) from the SDE
-        #     #    std shape: (B,)
-        #     _, std = self.sde.marginal_prob(x, t)
-        #     # model_input_t = t
-
-        #     # 3. Forward Pass
-        #     # .sample is REQUIRED because diffusers models return an output object
-        #     model_out = model(x_combined, t_combined, labels_combined)
-
-        #     eps_cond, eps_uncond = model_out.chunk(2, dim=0)
-
-        #     # CDF Extrapolation
-        #     eps_cfg = eps_uncond + self.guidance_scale * (eps_cond - eps_uncond)
-
-        #     # 4. Convert Output to Score
-        #     # Reshape std for broadcasting: (B, 1, 1, 1)
-        #     std = std.view(*std.shape, *([1] * (x.dim() - 1)))
-            
-        #     if self.sde_type == "ve":
-        #         # VE: Model predicts score * sigma (approx).
-        #         # score = output / sigma
-        #         score = eps_cfg / (std + 1e-6)
-        #     else:
-        #         # VP: Model predicts noise (epsilon).
-        #         # score = -epsilon / sigma
-        #         score = -eps_cfg / (std + 1e-6)
-
-        #     return score
 
         if use_ema and ema_model is not None:
             print("Using EMA model for reverse process.")

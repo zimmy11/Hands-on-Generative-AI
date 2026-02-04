@@ -1,17 +1,13 @@
 import sys
-import optuna
-import wandb
 import torch
 import torchvision
 from torch.utils.data import DataLoader, random_split
+from torchvision import transforms, datasets
 import wandb
-# Import all core components from your structured project modules
-from src.utils.sde_utils import * 
-from torchvision import transforms
-from src.training.ldm_module import LDMLightningModule # Your PL module core
-from torchvision.datasets import CelebA
-from torchvision import transforms
-#from src.models.unet_model import UNet  # Your custom UNet model
+
+# Import project modules
+from src.utils.sde_utils import Diffusion_Processes, SubVPSDE, VPSDE, VESDE, calculate_importance_sampling_probabilities
+from src.training.ldm_module import LDMLightningModule
 from src.models.UNet import UNet
 from .vae_utils import get_vae_encoder_func
 from src.models.components import EMAModel
@@ -20,190 +16,176 @@ from src.models.components import EMAModel
 # --- VISUALIZATION FUNCTION ---
 def log_denoising_step_wandb(x_tensor, step, total_steps, caption_prefix="Denoising"):
     """
-    Callback per loggare gli step intermedi del reverse process su WandB.
-    
+    Logs intermediate denoising steps to WandB.
+
     Args:
-        x_tensor: Il batch di immagini correnti (B, C, H, W)
-        step: Lo step corrente (int) (contando alla rovescia da N a 0)
-        total_steps: Il numero totale di step
+        x_tensor (torch.Tensor): Current batch of images (B, C, H, W)
+        step (int): Current step (counting down from N to 0)
+        total_steps (int): Total number of steps
+        caption_prefix (str): Prefix for caption
     """
-    # 1. Denormalizza/Clampa le immagini per visualizzazione
-    # Assumiamo che il modello lavori in [-1, 1], portiamo a [0, 1]
     wandb.init()
+    # Normalize images from [-1, 1] -> [0, 1] for visualization
     x_vis = x_tensor.detach().cpu().clamp(-1.0, 1.0)
     x_vis = (x_vis + 1.0) / 2.0
-    
-    # 2. Crea una grid (es. primi 16 sample)
+
+    # Create a grid of first 16 samples
     n_show = min(16, x_vis.shape[0])
     grid = torchvision.utils.make_grid(x_vis[:n_show], nrow=4)
-    
-    # 3. Logga su WandB
-    # Usiamo lo 'step' di WandB globale se disponibile, altrimenti logghiamo come media panel
-    # In genere per il denoising process si preferisce loggare un'immagine con caption
+
+    # Compute percentage complete
     percent_complete = 100 * (1 - step / total_steps)
     caption = f"{caption_prefix} - Step {step}/{total_steps} ({percent_complete:.1f}%)"
-    
+
+    # Log image to WandB
     wandb.log({
-        f"generated_samples/process": wandb.Image(grid, caption=caption)
+        "generated_samples/process": wandb.Image(grid, caption=caption)
     })
 
 
 # --- SETUP FUNCTION ---
 def setup(cfg, data_path: str, device: torch.device):
     """
-    Sets up all model components, data loaders, and calculates the IS tensor.
-    
+    Sets up model, data loaders, SDE process, EMA, and optional importance sampling.
+
     Args:
-        cfg (dict): Configuration dictionary loaded from YAML.
-        data_path (str): Path to the dataset (local path or GCS path for Dataloader).
-        device (torch.device): Target device ('cuda' or 'cpu').
-        
+        cfg (dict): Configuration dictionary from YAML
+        data_path (str): Path to dataset
+        device (torch.device): Target device
+
     Returns:
-        tuple: (ldm_module, train_loader, val_loader)
+        tuple: (ldm_module, train_loader, val_loader, test_loader)
     """
-    
     print(f"1. Initializing setup on {device}...")
 
+    dataset_type = cfg.get('dataset_type', 'Celeb')
+    image_size = cfg['image_size']
+
+    # ---------------------------
     # A. Data Loading & Splitting
-
-    forward_cfg = cfg
-    
-    
+    # ---------------------------
     try:
-        dataset_type = forward_cfg.get('dataset_type', 'Celeb')
-        image_size = forward_cfg['image_size']
-
         if dataset_type == "Celeb":
             print("Loading CelebA dataset...")
 
-            transform = transforms.Compose([transforms.CenterCrop(178), transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize([0.5]*3, [0.5]*3)])
+            transform = transforms.Compose([
+                transforms.CenterCrop(178),
+                transforms.Resize((image_size, image_size)),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5]*3, [0.5]*3)
+            ])
 
-            full_dataset = CelebA(
+            full_dataset = datasets.CelebA(
                 root=data_path,
-                # root = data_path
                 split="train",
                 target_type="attr",
                 transform=transform,
-                download=False   
+                download=False
             )
-            print("CelebA dataset loaded successfully.")
 
-            val_size = int(forward_cfg['validation_split_ratio'] * len(full_dataset))
+            # Split into train/val/test
+            val_size = int(cfg['validation_split_ratio'] * len(full_dataset))
             test_size = val_size
             train_size = len(full_dataset) - val_size - test_size
 
-            # Deterministic Split for reproducibility
-            torch.manual_seed(forward_cfg['seed'])
+            torch.manual_seed(cfg['seed'])
             train_dataset, val_dataset, test_dataset = random_split(
                 full_dataset, [train_size, val_size, test_size]
             )
 
-            # Create DataLoaders
-            train_loader = DataLoader(train_dataset, batch_size=forward_cfg['batch_size'], shuffle=True, num_workers=forward_cfg['num_workers'])# CHange Batch size
-            val_loader = DataLoader(val_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers']) # Change Batch size
-            test_loader = DataLoader(test_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers']) # Change Batch size
+            train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['num_workers'])
+            val_loader = DataLoader(val_dataset, batch_size=cfg['batch_size'], shuffle=False, num_workers=cfg['num_workers'])
+            test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size'], shuffle=False, num_workers=cfg['num_workers'])
+
             print(f"Dataset loaded: Total {len(full_dataset)} images.")
             print(f" -> Train Loader: {len(train_dataset)} images.")
-
-
 
         else:
             print("Loading MNIST dataset...")
 
-            transform = transforms.Compose([transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize([0.5], [0.5])])
+            transform = transforms.Compose([
+                transforms.Resize((image_size, image_size)),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5])
+            ])
 
-            train_full = torchvision.datasets.MNIST(
-                root=data_path,
-                train=True,
-                transform=transform,
-                download=False   
-            )
+            train_full = datasets.MNIST(root=data_path, train=True, transform=transform, download=False)
+            test_dataset = datasets.MNIST(root=data_path, train=False, transform=transform, download=False)
 
-            test_dataset = torchvision.datasets.MNIST(
-                root=data_path,
-                train=False,
-                transform=transform,
-                download=False   
-            )
-            print("MNIST dataset loaded successfully.")
-
-            val_ratio = forward_cfg['validation_split_ratio']  # es. 0.1
-
+            val_ratio = cfg['validation_split_ratio']
             val_size = int(val_ratio * len(train_full))
             train_size = len(train_full) - val_size
 
-            generator = torch.Generator().manual_seed(forward_cfg['seed'])
+            generator = torch.Generator().manual_seed(cfg['seed'])
+            train_dataset, val_dataset = random_split(train_full, [train_size, val_size], generator=generator)
 
-            train_dataset, val_dataset = random_split(
-                train_full,
-                [train_size, val_size],
-                generator=generator
-            )
-            train_loader = DataLoader(train_dataset, batch_size=forward_cfg['batch_size'], shuffle=True, num_workers=forward_cfg['num_workers'])
-            val_loader   = DataLoader(val_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers'])
-            test_loader  = DataLoader(test_dataset, batch_size=forward_cfg['batch_size'], shuffle=False, num_workers=forward_cfg['num_workers'])
-            print(f"Dataset loaded: Total {len(train_full   )} images.")
+            train_loader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['num_workers'])
+            val_loader = DataLoader(val_dataset, batch_size=cfg['batch_size'], shuffle=False, num_workers=cfg['num_workers'])
+            test_loader = DataLoader(test_dataset, batch_size=cfg['batch_size'], shuffle=False, num_workers=cfg['num_workers'])
+
+            print(f"Dataset loaded: Total {len(train_full)} images.")
             print(f" -> Train Loader: {len(train_dataset)} images.")
 
-    
-        
     except Exception as e:
         print(f"ERROR: Could not load data from {data_path}. Check path and dataset class. {e}")
         sys.exit(1)
 
-    # B. Model and Diffusion Setup
-    unet_model = UNet(in_channels=forward_cfg['latent_channels'], out_channels=forward_cfg['latent_channels'], num_attributes=forward_cfg['num_attributes']).to(device)#, out_channels=forward_cfg['latent_channels'], features=forward_cfg['features'], ).to(device)
-    vae_encoder_func, vae_decoder_func = get_vae_encoder_func(device) # VAE Encoder function
+    # ---------------------------
+    # B. Model & Diffusion Setup
+    # ---------------------------
+    unet_model = UNet(
+        in_channels=cfg['latent_channels'],
+        out_channels=cfg['latent_channels'],
+        num_attributes=cfg['num_attributes']
+    ).to(device)
+
+    vae_encoder_func, vae_decoder_func = get_vae_encoder_func(device)
     ema_model = EMAModel(unet_model).to(device)
+    forward_process = Diffusion_Processes(cfg)
 
-    # Initialize ForwardProcess (contains the subVP_SDE instance)
-    forward_process = Diffusion_Processes(forward_cfg)
-
-    if forward_cfg['sde_type'] == 'subVP':
-        sde = SubVPSDE(beta_max=forward_cfg['beta_max'], beta_min=forward_cfg['beta_min'], N=forward_cfg['N'])
-    elif forward_cfg['sde_type'] == 'vp':
-        sde = VPSDE(beta_max=forward_cfg['beta_max'], beta_min=forward_cfg['beta_min'], N=forward_cfg['N'])
+    if cfg['sde_type'] == 'subVP':
+        sde = SubVPSDE(beta_max=cfg['beta_max'], beta_min=cfg['beta_min'], N=cfg['N'])
+    elif cfg['sde_type'] == 'vp':
+        sde = VPSDE(beta_max=cfg['beta_max'], beta_min=cfg['beta_min'], N=cfg['N'])
     else:
-        sde = VESDE(sigma_min=forward_cfg['sigma_min'], sigma_max=forward_cfg['sigma_max'], N=forward_cfg['N'])
+        sde = VESDE(sigma_min=cfg['sigma_min'], sigma_max=cfg['sigma_max'], N=cfg['N'])
 
-    # C. Importance Sampling Calculation (IS)
-    is_probabilities = None
-    if forward_cfg['use_importance_sampling']:
-        print("2. Calculating Importance Sampling probabilities (g(t)^2 / lambda_orig(t))...")
-        # forward_process.sde_model is the subVP_SDE instance required for calculation
-        is_probabilities = calculate_importance_sampling_probabilities(
-            sde, 
-            forward_cfg['N'], 
-            device
-        )
+    # ---------------------------
+    # C. Importance Sampling Probabilities
+    # ---------------------------
+    if cfg['use_importance_sampling']:
+        print("2. Calculating Importance Sampling probabilities...")
+        is_probabilities = calculate_importance_sampling_probabilities(sde, cfg['N'], device)
     else:
-        is_probabilities = torch.ones(forward_cfg['N'], device=device) / forward_cfg['N']
+        is_probabilities = torch.ones(cfg['N'], device=device) / cfg['N']
 
+    print("Likelihood weighting:", cfg.get('likelihood_weighting', True))
 
-    print("Likelihood weighting:", forward_cfg.get('likelihood_weighting', True))
-    # D. Prepare Hparams for PL Module & Early Stopping
+    # ---------------------------
+    # D. Prepare hparams for Lightning Module
+    # ---------------------------
     hparams = {
-        'learning_rate': forward_cfg['learning_rate'],
-        'vae_scale_factor': forward_cfg['vae_scale_factor'],
-        'n_timesteps': forward_cfg['N'],
-        'is_probabilities': is_probabilities, # Pass the IS tensor through hparams for access in training_step
-        'batch_size': forward_cfg['batch_size'],
-        'data_path': data_path, 
-        'ema': ema_model , 
-        'likelihood_weighting': forward_cfg.get('likelihood_weighting', True), 
+        'learning_rate': cfg['learning_rate'],
+        'vae_scale_factor': cfg['vae_scale_factor'],
+        'n_timesteps': cfg['N'],
+        'is_probabilities': is_probabilities,
+        'batch_size': cfg['batch_size'],
+        'data_path': data_path,
+        'ema': ema_model,
+        'likelihood_weighting': cfg.get('likelihood_weighting', True),
         'dataset_type': dataset_type
     }
 
-
-
+    # ---------------------------
     # E. Instantiate Lightning Module
+    # ---------------------------
     ldm_module = LDMLightningModule(
-        unet_model=unet_model, 
-        forward_process=forward_process, 
-        vae_encoder=vae_encoder_func, 
+        unet_model=unet_model,
+        forward_process=forward_process,
+        vae_encoder=vae_encoder_func,
         vae_decoder=vae_decoder_func,
-        hparams=hparams, 
-        cfg = cfg
+        hparams=hparams,
+        cfg=cfg
     )
-    
+
     return ldm_module, train_loader, val_loader, test_loader

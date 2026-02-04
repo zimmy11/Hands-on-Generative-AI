@@ -33,8 +33,6 @@ def get_vae_encoder_func(device):
             # For DDPM/SDE training, we sample the mean of the posterior
             latents = posterior.sample()
             
-            # NOTE: Scaling by 0.18215 is deliberately omitted here. 
-            # It will be applied in the LDMLightningModule for better control.
             return latents
             
         @torch.no_grad()
@@ -55,4 +53,3 @@ def get_vae_encoder_func(device):
         # Return a placeholder function to allow development to continue if VAE loading fails
         return lambda x: torch.zeros((x.shape[0], 4, x.shape[2]//8, x.shape[3]//8), device=device)
 
-# The function get_vae_encoder_func is the 'vae_encoder_func' argument in the PL module.
