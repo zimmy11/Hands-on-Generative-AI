@@ -1,0 +1,58 @@
+# /configs/config.yaml
+
+# --- STOCHASTIC PROCESSES PARAMETERS
+beta_min: 0.1         # Beta schedule minimum (beta_0)
+beta_max: 20.0        # Beta schedule maximum (beta_1)
+n_timesteps: 1000      # N value for the diffusion schedule (T=1.0)
+schedule: 'linear'
+seed: 42
+sigma_min: 0.01      # Sigma min for VE SDE
+sigma_max: 50.0      # Sigma max for VE SDE
+
+
+# --- FORWARD PROCESS PARAMETERS
+t_forward: 1.0
+final: False
+eps: 1e-5
+closed_formula: True
+
+# --- REVERSE PROCESS PARAMETERS
+
+t_0: 1.0
+t_1: 0.001
+corrector: False
+n_corr: 50
+target_snr: 0.16
+rev_type: 'sde'
+sde_type: 'subVP'
+
+
+# --- CFG PARAMETERS ---
+guidance_scale: 1.5
+conditional: True
+num_attributes: 40
+cfg_mask_prob: 0.1
+
+# --- TRAINING HYPERPARAMETERS (Phase 2: Unconditional LDM) ---
+epochs: 10
+learning_rate: 0.0001
+batch_size: 16
+model: 'LDM'  # Model type: 'ldm' for Latent Diffusion Model
+# --- SDE/DIFFUSION SCHEDULE PARAMETERS (subVP SDE) ---
+use_importance_sampling: False # Set to True to use g(t)^2 / lambda_orig(t) sampling
+
+# MODEL PARAMETERS ---
+latent_channels: 4          # LATENT_CHANNELS
+image_size: 256             # IMAGE_SIZE (Input pixel size)
+vae_scale_factor: 0.18215   # VAE_SCALE_FACTOR
+vae_factor: 8               # VAE_FACTOR (Downsampling factor of VAE)
+validation_split_ratio: 0.1 # VALIDATION_SPLIT_RATIO
+self_attention: True     # SELF_ATTENTION (Enable self-attention layers)
+# --- DATA AND RESOURCE CONFIGURATION ---
+num_workers: 0      
+# Number of CPU workers for the DataLoader (Adjust based on GCP VM size)
+
+likelihood_weighting: False  # Enable likelihood weighting in loss calculation
+# data_path will be passed via the gcloud command line argument, 
+# but a default is included here for local testing consistency.
+data_path: ../data  # Path to the CelebA-HQ dataset

@@ -1,3 +1,32 @@
+# --- Data and Logs ---
 data/
+wandb/
 
-weights/
+# --- Python and Jupyter Artifacts ---
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+.venv/
+env/
+
+# --- Build and Distribution ---
+dist/
+
+# --- Generated Outputs & Samples ---
+# Based on your git rm commands, you likely want to ignore these folders entirely
+notebooks/samples/
+notebooks/weights_visualization/
+images/
+
+# PyTorch model weights/checkpoints
+*.pt
+*.pth
+*.ckpt
+*.png
+
+# Training logs and outputs
+outputs/
+checkpoints/
+results/
+runs/

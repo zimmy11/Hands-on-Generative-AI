@@ -19,7 +19,7 @@ class LatentDataset(Dataset):
 
     """
 
-    def __init__(self, data_dir, image_size=128):
+    def __init__(self, data_dir, image_size=256):
         """
         Init dataset.
         
@@ -44,6 +44,7 @@ class LatentDataset(Dataset):
             transforms.Resize(image_size, interpolation=transforms.InterpolationMode.BILINEAR),
             transforms.CenterCrop(image_size),
             transforms.ToTensor(), 
+            transforms.Normalize([0.5], [0.5]),  # Normalize to [-1, 1]
         ])
 
     def __len__(self):
