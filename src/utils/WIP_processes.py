@@ -102,16 +102,7 @@ class Diffusion_Processes:
         if num_steps is None:
             num_steps = self.N
 
-        # # --- FIX: Check if model is a function or a class ---
-        # if device is None:
-        #     if hasattr(model, "parameters"):
-        #         # It's a real PyTorch model
-        #         device = next(model.parameters()).device
-        #     else:
-        #         # It's a function (wrapper), so we assume CUDA or CPU
-        #         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        #next(model.parameters()).device
         B = shape[0]
         T = self.sde.T
         print(f"This is our SDE: {self.sde}")

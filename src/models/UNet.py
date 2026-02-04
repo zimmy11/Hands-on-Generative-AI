@@ -9,7 +9,7 @@ class UNet(nn.Module):
                  model_channels=32, 
                  out_channels=4, 
                  channel_mults=(1, 2, 4, 8),
-                 attn_resolutions=(16,), # Risoluzioni dove applicare Attenzione
+                 attn_resolutions=(16,), 
                  num_res_blocks=2,
                  dropout=0.0,
                  num_attributes=40):
@@ -42,20 +42,14 @@ class UNet(nn.Module):
         # Skip connections storage logic
         self.skips_config = [model_channels] 
         
-        # Risoluzione iniziale fittizia (assumendo input 64x64 o simile)
-        # Per semplicità, decidiamo l'attenzione basandoci sui livelli
+
         
         ds = 1
         for level, mult in enumerate(channel_mults):
             out_ch = model_channels * mult
             for _ in range(num_res_blocks):
-                # Check se serve attenzione a questo livello (logica semplificata basata sui canali o risoluzione)
-                # In Song et al, l'attenzione è spesso a 16x16. 
-                # Se l'input è 32x32: Level 0 (32), Level 1 (16) -> Attn qui, Level 2 (8).
-                #is_attn = (ds in [2, 4]) # Esempio: applica attn dopo 1 o 2 downsamples
-                # Nota: Per precisione assoluta, dovremmo tracciare la risoluzione attuale (H, W).
-                # Qui attivo l'attenzione sull'ultimo blocco se 'mult' è alto, stile DDPM.
-                is_attn = (level >= len(channel_mults) - 2) # Attenzione sugli strati profondi (bassa ris)
+
+                is_attn = (level >= len(channel_mults) - 2) 
                 
                 self.down_blocks.append(ResBlock(
                     in_channels=current_channels,
@@ -67,7 +61,7 @@ class UNet(nn.Module):
                 current_channels = out_ch
                 self.skips_config.append(current_channels)
                 
-            # Downsample (eccetto ultimo livello)
+            # Downsample 
             if level != len(channel_mults) - 1:
                 self.down_blocks.append(nn.Conv2d(current_channels, current_channels, 3, stride=2, padding=1))
                 self.skips_config.append(current_channels)
@@ -79,21 +73,17 @@ class UNet(nn.Module):
         
         # 5. Upsampling (Decoder)
         self.up_blocks = nn.ModuleList()
-        # Invertiamo i channel mults per risalire
         reversed_mults = list(reversed(channel_mults))
         
         for level, mult in enumerate(reversed_mults):
             out_ch = model_channels * mult
             
-            # Upsample block (ResBlocks + Upsample layer)
-            # In DDPM, per ogni livello di down ci sono solitamente 'num_res_blocks' + 1 nel decoder
-            # a causa della concatenazione degli skip.
+
             
             for _ in range(num_res_blocks + 1):
-                # Recuperiamo canali skip
                 skip_ch = self.skips_config.pop()
                 
-                is_attn = (level <= 1) # Attenzione sugli strati profondi (bassa ris)
+                is_attn = (level <= 1) 
                 
                 # Input channels = current + skip
                 self.up_blocks.append(ResBlock(
@@ -105,7 +95,7 @@ class UNet(nn.Module):
                 ))
                 current_channels = out_ch
                 
-            # Upsample (eccetto ultimo livello)
+            # Upsample 
             if level != len(channel_mults) - 1:
                 self.up_blocks.append(nn.Upsample(scale_factor=2, mode='nearest'))
                 ds //= 2
@@ -141,21 +131,19 @@ class UNet(nn.Module):
                 x = layer(x)
                 skips.append(x)
         
-        #print(f"Bottleneck In: {x.shape}")
         
         # --- Bottleneck ---
         x = self.mid_block1(x, cond_emb)
         x = self.mid_block2(x, cond_emb)
         
-        #print(f"Bottleneck Out: {x.shape}")
         
         # --- Decoder ---
         for layer in self.up_blocks:
             if isinstance(layer, ResBlock):
-                # Recupera skip
+                # Recover skip
                 skip = skips.pop()
                 
-                # Check dimension mismatch (può capitare con input non potenze di 2)
+                # Check dimension mismatch 
                 if x.shape[-2:] != skip.shape[-2:]:
                     x = F.interpolate(x, size=skip.shape[-2:], mode='bilinear', align_corners=False)
                 

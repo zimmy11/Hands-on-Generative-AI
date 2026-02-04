@@ -142,13 +142,7 @@ class SDE(abc.ABC):
                 G_sq = G[:, None, None, None] ** 2
                 rev_f = f - G_sq * score * factor
                 rev_G = torch.zeros_like(G) if self.probability_flow else G
-                
-                # print("probability_flow: ", self.probability_flow)
-                # print("drift: ", f)
-                # print("diffusion_rev: ", G)
-                # print("Reversed G: ", rev_G)
-                # print("Reversed f: ", rev_f[0][0][0][:5])
-                # print("score: ", score)
+
                 return rev_f, rev_G
 
         return RSDE()

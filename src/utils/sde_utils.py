@@ -1,33 +1,46 @@
 import torch
-#from .SDE import VESDE
 from .WIP_processes import Diffusion_Processes 
 from .WIP_SDE import VESDE, SubVPSDE, VPSDE
-#from .subVP_forward import ForwardProcess
+# from .subVP_forward import ForwardProcess
+
 
 def calculate_importance_sampling_probabilities(sde_model, N_timesteps, device):
     """
-    Calcola il tensore di probabilità p_IS per l'Importance Sampling.
-    p(t) ∝ g(t)^2 / λ_orig(t)
+    Computes the probability tensor for Importance Sampling (IS) over timesteps.
+
+    Formula: p(t) ∝ g(t)^2 / λ_orig(t)
+
+    Args:
+        sde_model: SubVPSDE, VESDE, or VPSDE instance with required methods.
+        N_timesteps (int): Number of timesteps to discretize [0, 1].
+        device (torch.device): Target device (CPU or GPU).
+
+    Returns:
+        torch.Tensor: Normalized probability tensor of shape (N_timesteps,)
     """
-    epsilon = 1e-5 # Per stabilità numerica (evitare divisioni per zero)
-    T_max = 1.0 - epsilon 
+    epsilon = 1e-5  # Small number for numerical stability to avoid division by zero
+    T_max = 1.0 - epsilon  # Maximum normalized time
 
-    # 1. Crea il vettore di timestep continui da [eps, 1.0]
+    # 1. Create a vector of timesteps in [epsilon, 1.0]
     timesteps = torch.linspace(epsilon, T_max, N_timesteps, device=device)
-    
-    # 2. Calcola i pesi necessari (g(t)^2 e λ_orig(t))
+
+    # 2. Compute the weighting factors
+    # g(t)^2: the squared diffusion coefficient
     g_squared = sde_model.get_g_squared(timesteps)
+
+    # α_orig(t)^2: original alpha squared
     alpha_original = sde_model.get_alpha_original(timesteps) ** 2
-    
-    print(f"G-Squared Max: {torch.max(g_squared)}, Min g^2: {torch.min(g_squared)} Avg. g^2: {torch.mean(g_squared)}, Std. g^2: {torch.std(g_squared)}")
-    print(f"Alpha Squared Max: {torch.max(alpha_original)}, Min alpha: {torch.min(alpha_original)} Avg. alpha: {torch.mean(alpha_original)}, Std. alpha: {torch.std(alpha_original)}")
 
-    # 3. Calcola il peso non normalizzato p(t) ∝ g(t)^2 / λ_orig(t)
-    # add epsilon to avoid 0 division
+    # Log some statistics for debugging
+    print(f"G-squared | max: {torch.max(g_squared):.6f}, min: {torch.min(g_squared):.6f}, "
+          f"mean: {torch.mean(g_squared):.6f}, std: {torch.std(g_squared):.6f}")
+    print(f"Alpha^2   | max: {torch.max(alpha_original):.6f}, min: {torch.min(alpha_original):.6f}, "
+          f"mean: {torch.mean(alpha_original):.6f}, std: {torch.std(alpha_original):.6f}")
+
+    # 3. Compute unnormalized IS weights: w(t) = g(t)^2 / (α_orig(t)^2 + epsilon)
     sampling_weights = g_squared / (alpha_original + epsilon)
-    
-    # 4. Converting to probabilities
-    probabilities = sampling_weights / torch.sum(sampling_weights)
-    
-    return probabilities
 
+    # 4. Normalize to get a probability distribution over timesteps
+    probabilities = sampling_weights / torch.sum(sampling_weights)
+
+    return probabilities
