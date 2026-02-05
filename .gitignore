@@ -9,6 +9,7 @@ __pycache__/
 */.ipynb_checkpoints/
 .venv/
 env/
+lightning_logs/
 
 # --- Build and Distribution ---
 dist/
@@ -24,6 +25,8 @@ images/
 *.pth
 *.ckpt
 *.png
+*.out
+*.err
 
 # Training logs and outputs
 outputs/
