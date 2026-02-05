@@ -1,62 +1,61 @@
-# 💡 Latent Diffusion Model (LDM) Light Implementation
+# Hands-on Generative AI: Latent Diffusion Model Implementation
 
 ## Project Overview
 
-This repository hosts a from-scratch implementation of a light-version **Latent Diffusion Model (LDM)**, the core architecture behind state-of-the-art text-to-image synthesis models like Stable Diffusion. The project is structured across three phases, moving from basic unconditional training to a fully conditional text-to-image generator using **Classifier-Free Guidance (CFG)**.
+This repository contains an implementation from scratch of a Latent Score-based Diffusion Model (LDM). The primary objective is to develop a functional LDM capable of effective deployment under limited computational resources. The implementation operates in a compressed latent space using a pretrained Variational Autoencoder (VAE) to reduce cost while maintaining perceptual quality. 
 
-[cite_start]The primary focus is on implementing the $\mathbf{U-Net}$ denoiser architecture from scratch, while leveraging pre-trained, lightweight components for the **Pixel Space (VAE)** and **Conditioning (Text Encoder)** to manage the project scope[cite: 1, 36, 43].
+The project explores three specific Stochastic Differential Equation (SDE) formulations: Variance Preserving (VP), Variance Exploding (VE), and subVP. Training incorporates standard score matching, Likelihood Weighting (LW), and Importance Sampling (IS) to optimize the learning of the score function. Conditional generation is achieved through Classifier-Free Guidance (CFG).
 
 ---
 
-## 🏗️ Project Structure and File Descriptions
+## Project Structure and File Descriptions
 
-The project adheres to professional ML engineering standards, prioritizing **modularity**, **reproducibility**, and **experiment tracking** via **PyTorch Lightning** and **Weights & Biases (W&B)**.
+The project follows a modular design for reproducibility and experiment tracking using PyTorch Lightning and Weights & Biases.
 
 ### Top-Level Files and Directories
 
 | File/Directory | Description |
 | :--- | :--- |
-| **`train.py`** | **Main Execution Script.** Handles argument parsing, loads configurations from `experiments/`, initializes the PyTorch Lightning `Trainer`, and starts the training process for the LDM. |
-| **`requirements.txt`** | Pins all Python dependencies (e.g., `torch`, `pytorch-lightning`, `wandb`, `omegaconf`, `sentence-transformers`). |
-| **`experiments/`** | Contains `.yaml` configuration files that define hyperparameters for specific training runs (e.g., learning rates, batch sizes, U-Net parameters, CFG drop rate). **Key to reproducibility.** |
-| **`data/`** | Storage for dataset files. |
-| **`models/`** | Storage for all model checkpoints, including the pre-trained VAE and the resulting trained U-Net $\epsilon_{\theta}$. |
-| **`src/`** | **Source Code.** Contains all the core, clean, and reusable Python modules. |
+| **`train.py`** | Main execution script. Handles argument parsing, configuration loading, and initializes the PyTorch Lightning trainer. |
+| **`test.py`** | Script for evaluating trained models through the computation of Negative Log-Likelihood (NLL), Fréchet Inception Distance (FID), and Inception Score (IS), as well as generating samples. |
+| **`requirements.txt`** | List of dependencies including `torch`, `pytorch-lightning`, and `wandb`. |
+| **`experiments/`** | Contains `.yaml` files, such as `base_config.yaml`, defining hyperparameters like learning rates, batch size, others and SDE related parameters. |
+| **`notebooks/`** | Jupyter notebooks for testing reverse diffusion processes (e.g., `Reverse_Process_Test.ipynb`, `MNIST_Reverse_Test.ipynb`). |
+| **`src/`** | Core source code directory containing model architectures and training logic. |
 
-### 📂 `src/` (Source Code Details)
-
-The `src/` directory is the heart of the project, defining the model architectures and training logic.
+### Source Code Details (`src/`)
 
 #### `src/models/` (Model Architectures)
 
-| File | Function | Phase |
-| :--- | :--- | :--- |
-| **`unet_model.py`** | [cite_start]Implements the $\mathbf{Denoising~U-Net}$ **from scratch**[cite: 33]. It assembles the core components (`ResBlocks`, `AttentionBlocks`, `Down/Upsample`) and includes stubs for cross-attention. | 1, 2, 3 |
-| **`components.py`** | [cite_start]Defines fundamental building blocks like the $\mathbf{Residual~Block}$, the $\mathbf{Downsampling/Upsampling}$ modules, and the crucial $\mathbf{Cross-Attention}$ layer ($\mathbf{Q}, \mathbf{KV}$) for conditioning injection[cite: 1, 34, 44]. | 1, 3 |
-| **`latent_diffusion.py`** | The main model wrapper, implemented as a $\mathbf{LightningModule}$. [cite_start]It contains the logic for the **forward diffusion process** and the **reverse (sampling) process** logic (e.g., $\text{DDPM}$ style sampling)[cite: 39, 40]. | 2, 3 |
+| File | Function |
+| :--- | :--- |
+| **`UNet.py`** | Implements the denoising U-Net backbone with a symmetric encoder-decoder structure. |
+| **`components.py`** | Defines modular building blocks including Residual Blocks, Self-Attention layers, and Strided Convolution modules. |
 
-#### `src/data/` (Data Pipelines)
+#### `src/training/` (Training Logic)
 
-| File | Function | Phase |
-| :--- | :--- | :--- |
-| **`vae_dataset.py`** | [cite_start]Handles loading raw images, applying necessary transformations, and encoding them into the latent space ($\mathbf{z}$) using the pre-trained VAE encoder ($\mathcal{E}$)[cite: 33]. | 1, 2 |
-| **`conditional_dataset.py`** | Manages data for conditional training. [cite_start]Loads image-text pairs, tokenizes the text, and processes it for the lightweight pre-trained Text Encoder[cite: 43, 44]. | 3 |
+| File | Function |
+| :--- | :--- |
+| **`ldm_module.py`** | The main `LightningModule` wrapper. It encapsulates the training procedure and the objective function. |
 
-#### `src/training/` (Training & Utilities)
+#### `src/utils/` (Utilities and SDE Logic)
 
-| File | Function | Phase |
-| :--- | :--- | :--- |
-| **`trainer.py`** | [cite_start]Encapsulates the training loop logic, including the $\mathbf{DDPM~Loss~Objective}$, logging to $\text{W\&B}$, and managing the implementation of **Classifier-Free Guidance (CFG)** ($\text{randomly drop out the conditioning}$)[cite: 40, 44, 45]. | 2, 3 |
-| **`utils/noise_scheduler.py`**| [cite_start]Implements the **fixed forward process** $\text{noise schedule}$ ($\beta_t$ values), essential for adding controlled Gaussian noise in the forward pass[cite: 40]. | 2 |
+| File | Function |
+| :--- | :--- |
+| **`WIP_SDE.py`** | Contains the mathematical formulations for VP, VE, and subVP SDEs, including drift and diffusion coefficients necessary for both forward and reverse process. |
+| **`WIP_processes.py`** | Contains the actual implementation of the forward and reverse diffusion processes, while relying on `WIP_SDE.py` mathematical formulation. |
+| **`sde_utils.py`** | Contains some utilities, specifically those for the computation and implementation of the Importance Sampling. |
+| **`vae_utils.py`** | Utilities for interfacing with the pretrained VAE (`stabilityai/sd-vae-ft-mse`) used for encoding and decoding. |
+| **`utils.py`** | General helper functions for the project, particularly important for the definition of the training setup. |
 
 ---
 
-## 🛠 Phased Implementation Plan
+## Phased Implementation Plan
 
-The project is divided into three distinct phases over approximately 4 months, allowing for focused development and testing.
+The development is structured into three distinct phases to ensure modular testing and progression.
 
-| Phase | Time | Focus | Key Deliverable |
-| :--- | :--- | :--- | :--- |
-| **Phase 1: Architecture Setup** | [cite_start]3-4 weeks [cite: 32] | Set up the latent space. [cite_start]Implement the lightweight $\mathbf{U-Net}$ core components (downsampling, bottleneck, upsampling, skip connections) from scratch[cite: 33]. | A runnable $\text{U-Net}$ assembled from modular components. |
-| **Phase 2: Unconditional LDM** | [cite_start]2-3 weeks [cite: 38] | Implement the **Forward** and **Reverse** diffusion processes. [cite_start]**Unconditionally train** the $\text{U-Net}$ on latent representations $\mathbf{z}$[cite: 39, 40]. | Model capable of generating images from pure noise $\mathbf{z}_T$ (latent space only). |
-| **Phase 3: Conditional Text-to-Image** | [cite_start]3-4 weeks [cite: 42] | [cite_start]Integrate the pre-trained $\mathbf{Text~Encoder}$ (e.g., $\text{all-MiniLM-L6-v2}$) and modify the $\text{U-Net}$ to inject conditioning $\mathbf{c}$ via $\mathbf{Cross-Attention}$[cite: 43, 44]. [cite_start]Implement $\mathbf{Classifier-Free~Guidance (CFG)}$[cite: 44]. | Fully functional Text-to-Image LDM. |
+| Phase | Focus | Key Deliverable |
+| :--- | :--- | :--- |
+| **Phase 1: Architecture Setup** | Implementation of U-Net core components from scratch, including downsampling, bottleneck, and upsampling modules. | A runnable U-Net backbone. |
+| **Phase 2: Unconditional LDM** | Implementation of forward and reverse SDE processes. Training the U-Net unconditionally on latent representations. | Model capable of generating images from pure noise. |
+| **Phase 3: Conditional Generation** | Integration of conditioning signals and implementation of Classifier-Free Guidance (CFG). | Fully functional conditional LDM. |
