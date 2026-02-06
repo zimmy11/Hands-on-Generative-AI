@@ -7,6 +7,31 @@ This repository contains an implementation from scratch of a Latent Score-based 
 The project explores three specific Stochastic Differential Equation (SDE) formulations: Variance Preserving (VP), Variance Exploding (VE), and subVP. Training incorporates standard score matching, Likelihood Weighting (LW), and Importance Sampling (IS) to optimize the learning of the score function. Conditional generation is achieved through Classifier-Free Guidance (CFG).
 
 ---
+<table align="center">
+  <tr>
+    <td valign="top">
+      <img src="images/denoising_gif.gif" alt="Reverse diffusion sampling demo" height="260" style="display:block;">
+    </td>
+    <td valign="top">
+      <img src="images/gif/output_0.png" alt="Decoded result (fixed)" height="260" style="display:block;">
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <em>
+    Reverse diffusion sampling for VP with Likelihood Weighting + Importance Sampling in latent space (left).
+    Decoded output shown as a fixed reference (right).
+  </em>
+</p>
+
+<p align="center">
+  <img src="images/decoded_images_diff_training.png" alt="VP vs subVP vs Ve comparison, from Left → Right" width="700">
+  <br>
+  <em>Qualitative comparison across SDE formulations: VP, subVP, and VE, from Left → Right, respectively. Using the same sampling budget.</em>
+</p>
+
+---
 
 ## Project Structure and File Descriptions
 
